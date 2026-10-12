@@ -1,87 +1,355 @@
 "use client"
 
-import { useEffect, useState } from 'react'
+import React, { useEffect, useState, useMemo, useCallback } from 'react'
 import { supabase } from '@/lib/supabase'
 import { sharedDoctors } from '@/lib/doctors'
+
+interface ScheduleSlot {
+  active: boolean
+  start: string
+  end: string
+}
+
+interface Doctor {
+  id: string | number
+  doctor_no?: string
+  name: string
+  degree?: string
+  branch?: string
+  follow_up_fee?: string
+  specialization: string
+  phone?: string
+  address?: string
+  image_url?: string
+  status: 'Present' | 'Absent'
+  status_updated_at?: string
+  days: string[]
+  sitting_hours?: string
+  schedule: Record<string, ScheduleSlot>
+  created_at?: string
+}
+
+interface Appointment {
+  id: string
+  patient_name: string
+  phone: string
+  doctor_id: string
+  booking_date: string
+  age?: number | null
+  patient_type: string
+  symptoms?: string
+  serial_number?: number
+  computed_serial?: number
+  status?: string
+  created_at?: string
+}
+
+const DAYS_OF_WEEK = [
+  'Saturday',
+  'Sunday',
+  'Monday',
+  'Tuesday',
+  'Wednesday',
+  'Thursday',
+  'Friday'
+]
+
+const DEFAULT_SCHEDULE: Record<string, ScheduleSlot> = DAYS_OF_WEEK.reduce((acc, day) => {
+  acc[day] = { active: false, start: '10:00 AM', end: '01:00 PM' }
+  return acc
+}, {} as Record<string, ScheduleSlot>)
 
 export default function AdminPanel() {
   const [isAuthenticated, setIsAuthenticated] = useState(false)
   const [passwordInput, setPasswordInput] = useState('')
-  
-  const [activeTab, setActiveTab] = useState<'doctors' | 'appointments' | 'booking'>('doctors')
-  const [appointments, setAppointments] = useState<any[]>([])
-  const [doctors, setDoctors] = useState<any[]>(sharedDoctors)
-  const [loading, setLoading] = useState(false)
+  const [showPassword, setShowPassword] = useState(false)
 
-  // Filter states for appointments
+  const [activeTab, setActiveTab] = useState<'doctors' | 'appointments' | 'booking' | 'quick-reserve' | 'quick-reserve-list'>('doctors')
+
+  const [doctors, setDoctors] = useState<Doctor[]>([])
+  const [appointments, setAppointments] = useState<Appointment[]>([])
+  const [isLoading, setIsLoading] = useState(false)
+
   const [filterDoctor, setFilterDoctor] = useState('')
-  const [filterDate, setFilterDate] = useState('')
+  const [filterDateMode, setFilterDateMode] = useState('all')
 
-  // Add Doctor Modal & Form State
   const [isAddModalOpen, setIsAddModalOpen] = useState(false)
   const [isEditMode, setIsEditMode] = useState(false)
-  const [currentDocId, setCurrentDocId] = useState<any>(null)
+  const [currentDocId, setCurrentDocId] = useState<string | number | null>(null)
 
-  const daysOfWeek = ['Saturday', 'Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday']
-
-  const [docForm, setDocForm] = useState({
+  const [docForm, setDocForm] = useState<{
+    doctor_no: string
+    name: string
+    degree: string
+    branch: string
+    follow_up_fee: string
+    specialization: string
+    phone: string
+    address: string
+    image_url: string
+    status: 'Present' | 'Absent'
+    schedule: Record<string, ScheduleSlot>
+  }>({
     doctor_no: '',
     name: '',
     degree: '',
     branch: '',
-    follow_up_fee: '',
+    follow_up_fee: '500 BDT',
     specialization: '',
     phone: '',
     address: '',
-    image_url: '',
+    image_url: '/doctors/doctor-1.png',
     status: 'Present',
-    schedule: daysOfWeek.reduce((acc: any, day) => {
-      acc[day] = { active: false, start: '10:00 AM', end: '01:00 PM' }
-      return acc
-    }, {})
+    schedule: { ...DEFAULT_SCHEDULE }
   })
 
-  // Delete Confirmation State
-  const [deleteModalDoc, setDeleteModalDoc] = useState<any>(null)
+  const [deleteModalDoc, setDeleteModalDoc] = useState<Doctor | null>(null)
   const [deleteNameInput, setDeleteNameInput] = useState('')
   const [deleteConfirmWord, setDeleteConfirmWord] = useState('')
 
-  // Admin Booking Form State
   const [adminBooking, setAdminBooking] = useState({
     name: '',
     phone: '',
     specialization: '',
     doctor_id: '',
-    booking_date: new Date().toISOString().split('T')[0],
+    booking_date: '',
     age: '',
-    patient_type: 'New',
+    patient_type: 'Admin',
     note: ''
   })
+  const [selectedAdminDoctor, setSelectedAdminDoctor] = useState<Doctor | null>(null)
+  const [availableDatesForAdminDoc, setAvailableDatesForAdminDoc] = useState<any[]>([])
+  const [isAdminDoctorAbsent, setIsAdminDoctorAbsent] = useState(false)
   const [bookingSubmitted, setBookingSubmitted] = useState(false)
+
+  const [quickReserveType, setQuickReserveType] = useState('NICU')
+  const [quickForm, setQuickForm] = useState({ name: '', age: '', contact: '' })
+  const [quickSubmitted, setQuickSubmitted] = useState(false)
+
+  const shouldResetAbsentStatus = (updatedAtStr?: string) => {
+    if (!updatedAtStr) return false
+    const updatedDate = new Date(updatedAtStr)
+    const now = new Date()
+
+    const bdNow = new Date(now.getTime() + (6 * 60 + now.getTimezoneOffset()) * 60000)
+    const bdUpdated = new Date(updatedDate.getTime() + (6 * 60 + updatedDate.getTimezoneOffset()) * 60000)
+
+    const bdCutoff = new Date(bdNow)
+    bdCutoff.setHours(2, 0, 0, 0)
+
+    if (bdNow >= bdCutoff && bdUpdated < bdCutoff) return true
+    if (bdNow.getTime() - bdUpdated.getTime() > 24 * 60 * 60 * 1000) return true
+    return false
+  }
+
+  const fetchDoctors = useCallback(async () => {
+    try {
+      const { data: dbData } = await supabase
+        .from('doctors')
+        .select('*')
+
+      const resetIds: any[] = []
+      const dbList = dbData || []
+
+      const formattedDb = dbList.map((doc: any) => {
+        let currentStatus: 'Present' | 'Absent' = doc.status || 'Present'
+        if (currentStatus === 'Absent' && shouldResetAbsentStatus(doc.status_updated_at)) {
+          currentStatus = 'Present'
+          resetIds.push(doc.id)
+        }
+
+        let sch = doc.schedule
+        if (typeof sch === 'string') {
+          try { sch = JSON.parse(sch) } catch (e) { sch = { ...DEFAULT_SCHEDULE } }
+        }
+
+        return {
+          ...doc,
+          status: currentStatus,
+          schedule: sch || { ...DEFAULT_SCHEDULE },
+          days: Array.isArray(doc.days) ? doc.days : []
+        }
+      })
+
+      // ২৪ জন ডাক্তারের সাথে মার্জ
+      const fullList = sharedDoctors.map((staticDoc: any) => {
+        const matched = formattedDb.find((item: any) => {
+          const sName = staticDoc.name?.trim().toLowerCase().replace(/^(dr\.|prof\.|dr|prof)\s+/i, '')
+          const dName = item.name?.trim().toLowerCase().replace(/^(dr\.|prof\.|dr|prof)\s+/i, '')
+          return (
+            staticDoc.id?.toString() === item.id?.toString() ||
+            staticDoc.doctor_no?.toString() === item.doctor_no?.toString() ||
+            (sName && dName && (sName.includes(dName) || dName.includes(sName)))
+          )
+        })
+
+        if (matched) {
+          return {
+            ...staticDoc,
+            ...matched,
+            follow_up_fee: matched.follow_up_fee || matched.fee || staticDoc.fee || '500 BDT',
+            status: matched.status || 'Present'
+          }
+        }
+
+        return {
+          ...staticDoc,
+          follow_up_fee: staticDoc.fee || staticDoc.follow_up_fee || '500 BDT',
+          status: staticDoc.status || 'Present'
+        }
+      })
+
+      setDoctors(fullList)
+
+      if (resetIds.length > 0) {
+        await supabase
+          .from('doctors')
+          .update({ status: 'Present', status_updated_at: new Date().toISOString() })
+          .in('id', resetIds)
+      }
+    } catch (err) {
+      console.error('fetchDoctors error:', err)
+      setDoctors(sharedDoctors as any)
+    }
+  }, [])
+
+  const fetchAppointments = useCallback(async () => {
+    try {
+      const { data, error } = await supabase
+        .from('bookings')
+        .select('*')
+        .order('created_at', { ascending: false })
+
+      if (error) {
+        const { data: fallbackData } = await supabase
+          .from('bookings')
+          .select('*')
+          .order('booking_date', { ascending: true })
+        setAppointments(fallbackData || [])
+        return
+      }
+
+      setAppointments(data || [])
+    } catch (err) {
+      console.error('fetchAppointments error:', err)
+    }
+  }, [])
 
   useEffect(() => {
     if (isAuthenticated) {
+      fetchDoctors()
       fetchAppointments()
     }
-  }, [isAuthenticated])
-
-  async function fetchAppointments() {
-    try {
-      const { data, error } = await supabase.from('bookings').select('*').order('created_at', { ascending: false })
-      if (error) throw error
-      if (data) setAppointments(data)
-    } catch (err) {
-      console.error('Error fetching appointments:', err)
-    }
-  }
+  }, [isAuthenticated, fetchDoctors, fetchAppointments])
 
   const handleLogin = (e: React.FormEvent) => {
     e.preventDefault()
     if (passwordInput === 'delta123') {
       setIsAuthenticated(true)
     } else {
-      alert('Incorrect Password! Try "delta123"')
+      alert('Incorrect Password! Use "delta123"')
     }
+  }
+
+  const getNext7Days = () => {
+    const list = []
+    const today = new Date()
+    for (let i = 0; i < 7; i++) {
+      const d = new Date(today)
+      d.setDate(today.getDate() + i)
+      list.push(d.toISOString().split('T')[0])
+    }
+    return list
+  }
+
+  const getTop3AvailableDates = (doctorDays: string[]) => {
+    const list = []
+    const today = new Date()
+    for (let i = 0; i < 60; i++) {
+      if (list.length >= 3) break
+      const d = new Date(today)
+      d.setDate(today.getDate() + i)
+      const weekday = d.toLocaleDateString('en-US', { weekday: 'long' })
+      if (doctorDays && doctorDays.includes(weekday)) {
+        list.push({
+          dateStr: d.toISOString().split('T')[0],
+          display: d.toLocaleDateString('en-US', { weekday: 'short', day: 'numeric', month: 'short', year: '2-digit' }),
+          weekday: weekday
+        })
+      }
+    }
+    return list
+  }
+
+  const handleAdminDoctorChange = (docId: string) => {
+    setAdminBooking(prev => ({ ...prev, doctor_id: docId }))
+    const doc = doctors.find(d => d.id.toString() === docId)
+    if (doc) {
+      setSelectedAdminDoctor(doc)
+      const validDates = getTop3AvailableDates(doc.days)
+      setAvailableDatesForAdminDoc(validDates)
+      if (validDates.length > 0 && doc.status === 'Present') {
+        setAdminBooking(prev => ({ ...prev, booking_date: validDates[0].dateStr }))
+        setIsAdminDoctorAbsent(false)
+      } else {
+        setIsAdminDoctorAbsent(doc.status === 'Absent' || validDates.length === 0)
+      }
+    } else {
+      setSelectedAdminDoctor(null)
+      setAvailableDatesForAdminDoc([])
+      setIsAdminDoctorAbsent(false)
+    }
+  }
+
+  const resetDocForm = () => {
+    setIsEditMode(false)
+    setCurrentDocId(null)
+    setDocForm({
+      doctor_no: String(doctors.length + 1),
+      name: '',
+      degree: '',
+      branch: '',
+      follow_up_fee: '500 BDT',
+      specialization: '',
+      phone: '',
+      address: '',
+      image_url: '/doctors/doctor-1.png',
+      status: 'Present',
+      schedule: JSON.parse(JSON.stringify(DEFAULT_SCHEDULE))
+    })
+  }
+
+  const handleEditClick = (doc: Doctor) => {
+    setIsEditMode(true)
+    setCurrentDocId(doc.id)
+
+    const initialSchedule = JSON.parse(JSON.stringify(DEFAULT_SCHEDULE))
+    if (doc.schedule && typeof doc.schedule === 'object') {
+      Object.keys(doc.schedule).forEach(day => {
+        if (initialSchedule[day]) {
+          initialSchedule[day] = { ...doc.schedule[day] }
+        }
+      })
+    } else if (Array.isArray(doc.days)) {
+      doc.days.forEach(day => {
+        if (initialSchedule[day]) initialSchedule[day].active = true
+      })
+    }
+
+    setDocForm({
+      doctor_no: doc.doctor_no || String(doc.id),
+      name: doc.name || '',
+      degree: doc.degree || '',
+      branch: doc.branch || '',
+      follow_up_fee: doc.follow_up_fee || '500 BDT',
+      specialization: doc.specialization || '',
+      phone: doc.phone || '',
+      address: doc.address || '',
+      image_url: doc.image_url || '/doctors/doctor-1.png',
+      status: doc.status || 'Present',
+      schedule: initialSchedule
+    })
+    setIsAddModalOpen(true)
   }
 
   const handleScheduleToggle = (day: string) => {
@@ -104,75 +372,144 @@ export default function AdminPanel() {
     }))
   }
 
+  // UPSERT LOGIC: ডাটাবেজে রো না থাকলেও স্বয়ংক্রিয়ভাবে তৈরি হবে
   const handleSaveDoctor = async (e: React.FormEvent) => {
     e.preventDefault()
-    alert('Doctor saved successfully!')
-    setIsAddModalOpen(false)
+    setIsLoading(true)
+
+    try {
+      const activeDays = Object.keys(docForm.schedule).filter(d => docForm.schedule[d].active)
+      const firstActiveDay = activeDays[0]
+      const sittingHours = firstActiveDay
+        ? `${docForm.schedule[firstActiveDay].start} - ${docForm.schedule[firstActiveDay].end}`
+        : '10:00 AM - 01:00 PM'
+
+      const doctorPayload = {
+        doctor_no: docForm.doctor_no,
+        name: docForm.name,
+        degree: docForm.degree,
+        branch: docForm.branch,
+        follow_up_fee: docForm.follow_up_fee,
+        specialization: docForm.specialization,
+        phone: docForm.phone,
+        address: docForm.address,
+        image_url: docForm.image_url,
+        status: docForm.status,
+        status_updated_at: new Date().toISOString(),
+        days: activeDays,
+        sitting_hours: sittingHours,
+        schedule: docForm.schedule
+      }
+
+      // Check if doctor exists in DB by Name or Doctor No
+      const { data: existingRows } = await supabase
+        .from('doctors')
+        .select('id, name')
+        .or(`name.eq."${docForm.name}",doctor_no.eq."${docForm.doctor_no}"`)
+
+      if (existingRows && existingRows.length > 0) {
+        // Update
+        const targetId = existingRows[0].id
+        const { error } = await supabase
+          .from('doctors')
+          .update(doctorPayload)
+          .eq('id', targetId)
+
+        if (error) throw error
+      } else {
+        // Insert new row in DB
+        const { error } = await supabase
+          .from('doctors')
+          .insert([doctorPayload])
+
+        if (error) throw error
+      }
+
+      // Local State Update
+      setDoctors(prev =>
+        prev.map(d =>
+          d.name.trim().toLowerCase() === docForm.name.trim().toLowerCase() ||
+          d.id === currentDocId
+            ? { ...d, ...doctorPayload }
+            : d
+        )
+      )
+
+      alert('Doctor saved & synced successfully to database!')
+      setIsAddModalOpen(false)
+      fetchDoctors()
+    } catch (err: any) {
+      alert('Save failed: ' + (err.message || 'Error occurred'))
+    } finally {
+      setIsLoading(false)
+    }
   }
 
-  const resetDocForm = () => {
-    setIsEditMode(false)
-    setCurrentDocId(null)
-    setDocForm({
-      doctor_no: '',
-      name: '',
-      degree: '',
-      branch: '',
-      follow_up_fee: '',
-      specialization: '',
-      phone: '',
-      address: '',
-      image_url: '',
-      status: 'Present',
-      schedule: daysOfWeek.reduce((acc: any, day) => {
-        acc[day] = { active: false, start: '10:00 AM', end: '01:00 PM' }
-        return acc
-      }, {})
-    })
-  }
+  // Quick Inline Status Toggle
+  const handleInlineStatusToggle = async (doc: Doctor) => {
+    const newStatus: 'Present' | 'Absent' = doc.status === 'Present' ? 'Absent' : 'Present'
+    try {
+      const { data: existingRows } = await supabase
+        .from('doctors')
+        .select('id')
+        .eq('name', doc.name)
 
-  const handleEditClick = (doc: any) => {
-    setIsEditMode(true)
-    setCurrentDocId(doc.id)
-    setDocForm({
-      doctor_no: doc.doctor_no || '',
-      name: doc.name || '',
-      degree: doc.degree || '',
-      branch: doc.branch || '',
-      follow_up_fee: doc.follow_up_fee || '',
-      specialization: doc.specialization || '',
-      phone: doc.phone || '',
-      address: doc.address || '',
-      image_url: doc.image_url || '',
-      status: doc.status || 'Present',
-      schedule: doc.schedule || daysOfWeek.reduce((acc: any, day) => {
-        acc[day] = { active: false, start: '10:00 AM', end: '01:00 PM' }
-        return acc
-      }, {})
-    })
-    setIsAddModalOpen(true)
+      if (existingRows && existingRows.length > 0) {
+        await supabase
+          .from('doctors')
+          .update({
+            status: newStatus,
+            status_updated_at: new Date().toISOString()
+          })
+          .eq('id', existingRows[0].id)
+      } else {
+        await supabase.from('doctors').insert([
+          {
+            name: doc.name,
+            specialization: doc.specialization,
+            follow_up_fee: doc.follow_up_fee || '500 BDT',
+            days: doc.days || [],
+            status: newStatus,
+            status_updated_at: new Date().toISOString()
+          }
+        ])
+      }
+
+      setDoctors(prev =>
+        prev.map(d => (d.name === doc.name ? { ...d, status: newStatus } : d))
+      )
+    } catch (err: any) {
+      alert('Status change failed: ' + err.message)
+    }
   }
 
   const handleDeleteSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
-    if (deleteNameInput !== deleteModalDoc.name || deleteConfirmWord !== 'delete') {
+    if (!deleteModalDoc) return
+
+    if (deleteNameInput.trim() !== deleteModalDoc.name.trim() || deleteConfirmWord !== 'delete') {
       alert('Please type the exact doctor name and the word "delete" to confirm.')
       return
     }
-    setDoctors(doctors.filter(d => d.id !== deleteModalDoc.id))
-    setDeleteModalDoc(null)
-    setDeleteNameInput('')
-    setDeleteConfirmWord('')
-    alert('Doctor deleted successfully.')
+
+    try {
+      await supabase.from('doctors').delete().eq('name', deleteModalDoc.name)
+      setDoctors(prev => prev.filter(d => d.name !== deleteModalDoc.name))
+      setDeleteModalDoc(null)
+      setDeleteNameInput('')
+      setDeleteConfirmWord('')
+      alert('Doctor deleted successfully.')
+    } catch (err: any) {
+      alert('Delete failed: ' + err.message)
+    }
   }
 
-  // Database Delete Function for Appointments
   const handleDeleteAppointment = async (id: string) => {
-    if (!confirm('Are you sure you want to delete this appointment from database?')) return;
+    if (!confirm('Are you sure you want to delete this booking?')) return
     try {
       const { error } = await supabase.from('bookings').delete().eq('id', id)
       if (error) throw error
-      setAppointments(appointments.filter(a => a.id !== id))
+      setAppointments(prev => prev.filter(a => a.id !== id))
     } catch (err: any) {
       alert('Delete failed: ' + err.message)
     }
@@ -180,28 +517,58 @@ export default function AdminPanel() {
 
   const handleAdminBookingSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
+    if (adminBooking.phone.length !== 11) {
+      alert('Phone number must be exactly 11 digits.')
+      return
+    }
+    if (isAdminDoctorAbsent || availableDatesForAdminDoc.length === 0) {
+      alert('Selected doctor is absent or has no available schedule.')
+      return
+    }
+
     try {
       const { count } = await supabase
         .from('bookings')
         .select('*', { count: 'exact', head: true })
-        .eq('doctor_id', adminBooking.doctor_id)
+        .eq('doctor_id', selectedAdminDoctor!.id.toString())
         .eq('booking_date', adminBooking.booking_date)
 
       const nextSerial = (count || 0) + 1
+      const serialNumStr = `#${nextSerial}`
 
       const { error } = await supabase.from('bookings').insert({
         patient_name: adminBooking.name,
         phone: adminBooking.phone,
-        doctor_id: adminBooking.doctor_id,
+        doctor_id: selectedAdminDoctor!.id.toString(),
         booking_date: adminBooking.booking_date,
         age: adminBooking.age ? parseInt(adminBooking.age) : null,
-        patient_type: adminBooking.patient_type,
-        symptoms: adminBooking.note,
+        patient_type: 'Admin',
+        symptoms: adminBooking.note || '',
         serial_number: nextSerial,
         status: 'Confirmed'
       })
 
       if (error) throw error
+
+      try {
+        await fetch('https://client.giosms.com/api/v1/send', {
+          method: 'POST',
+          headers: {
+            Authorization: 'Bearer 9|4KjApQNKFOrzY5teFNuZbfOzCKP9Dn4re5aPJfKW219943ad',
+            'Content-Type': 'application/json',
+            Accept: 'application/json'
+          },
+          body: JSON.stringify({
+            to: `88${adminBooking.phone}`,
+            message: `Delta Health Care Jatrabari Ltd.\nDear ${adminBooking.name}, your appointment with ${selectedAdminDoctor!.name} on ${adminBooking.booking_date} (${selectedAdminDoctor!.sitting_hours}) is confirmed. Serial: ${serialNumStr}. Fee: ${selectedAdminDoctor!.follow_up_fee || '500 Tk'}.\nLocation Map: https://share.google/Gr8O0DTGxw96MwyZp`,
+            sender_id: '8809666720320',
+            type: 'transactional'
+          })
+        })
+      } catch (smsError) {
+        console.error('SMS Error:', smsError)
+      }
+
       setBookingSubmitted(true)
       fetchAppointments()
     } catch (err: any) {
@@ -209,24 +576,143 @@ export default function AdminPanel() {
     }
   }
 
-  const downloadCSV = () => {
-    const headers = ['Serial,Patient Name,Phone,Age,Doctor ID,Date,Type,Source,Note,Status\n']
-    const rows = filteredAppointments.map(a => 
-      `"${a.serial_number}","${a.patient_name}","${a.phone}","${a.age || ''}","${a.doctor_id}","${a.booking_date}","${a.patient_type}","Admin/Online","${a.symptoms || ''}","${a.status}"`
-    )
-    const blob = new Blob([headers.concat(rows).join('\n')], { type: 'text/csv' })
-    const url = window.URL.createObjectURL(blob)
-    const a = document.createElement('a')
-    a.href = url
-    a.download = `Appointments_${new Date().toISOString().split('T')[0]}.csv`
-    a.click()
+  const handleAdminQuickSubmit = async (e: React.FormEvent) => {
+    e.preventDefault()
+    if (quickForm.contact.length !== 11) {
+      alert('Contact number must be 11 digits.')
+      return
+    }
+
+    try {
+      const { error } = await supabase.from('bookings').insert({
+        patient_name: quickForm.name,
+        phone: quickForm.contact,
+        doctor_id: `Emergency-${quickReserveType}`,
+        booking_date: new Date().toISOString().split('T')[0],
+        age: quickForm.age ? parseInt(quickForm.age) : null,
+        patient_type: 'Admin',
+        symptoms: `Quick Reservation: ${quickReserveType}`,
+        status: 'Confirmed'
+      })
+
+      if (error) throw error
+
+      try {
+        await fetch('https://client.giosms.com/api/v1/send', {
+          method: 'POST',
+          headers: {
+            Authorization: 'Bearer 9|4KjApQNKFOrzY5teFNuZbfOzCKP9Dn4re5aPJfKW219943ad',
+            'Content-Type': 'application/json',
+            Accept: 'application/json'
+          },
+          body: JSON.stringify({
+            to: `88${quickForm.contact}`,
+            message: `Delta Health Care Jatrabari Ltd.\nDear ${quickForm.name}, your emergency slot (${quickReserveType}) is confirmed.\nLocation Map: https://share.google/Gr8O0DTGxw96MwyZp`,
+            sender_id: '8809666720320',
+            type: 'transactional'
+          })
+        })
+      } catch (smsError) {
+        console.error('SMS Error:', smsError)
+      }
+
+      setQuickSubmitted(true)
+      fetchAppointments()
+    } catch (err: any) {
+      alert('Quick Reservation failed: ' + err.message)
+    }
   }
 
-  const filteredAppointments = appointments.filter(app => {
-    const matchDoc = filterDoctor ? app.doctor_id?.toString() === filterDoctor : true;
-    const matchDate = filterDate ? app.booking_date === filterDate : true;
-    return matchDoc && matchDate;
-  })
+  const filteredAppointments = useMemo(() => {
+    return appointments.filter(app => {
+      const isQuickReserve =
+        app.doctor_id?.toString().startsWith('Emergency-') ||
+        app.symptoms?.includes('Quick Reservation')
+
+      if (activeTab === 'quick-reserve-list') return isQuickReserve
+      if (activeTab === 'appointments') {
+        if (isQuickReserve) return false
+        const matchDoc = filterDoctor ? app.doctor_id?.toString() === filterDoctor : true
+        const matchDate = filterDateMode !== 'all' ? app.booking_date === filterDateMode : true
+        return matchDoc && matchDate
+      }
+      return true
+    })
+  }, [appointments, activeTab, filterDoctor, filterDateMode])
+
+  const downloadPDFReport = () => {
+    const printWindow = window.open('', '', 'left=0,top=0,width=900,height=700')
+    if (!printWindow) return
+
+    const rowsHtml = filteredAppointments
+      .map((a, idx) => {
+        const matchedDoc = doctors.find(d => d.id.toString() === a.doctor_id?.toString())
+        const docName = matchedDoc ? matchedDoc.name : a.doctor_id
+        const sourceLabel = a.patient_type === 'Admin' ? 'Admin' : 'Online'
+        return `
+        <tr>
+          <td>#${idx + 1}</td>
+          <td><b>${a.patient_name}</b></td>
+          <td>${a.phone}</td>
+          <td>${a.age || '-'}</td>
+          <td>${docName}</td>
+          <td>${a.booking_date}</td>
+          <td>${sourceLabel}</td>
+        </tr>
+      `
+      })
+      .join('')
+
+    printWindow.document.write(`
+      <html>
+        <head>
+          <title>Appointment Report - Delta Health Care</title>
+          <style>
+            body { font-family: Arial, sans-serif; padding: 20px; color: #111; }
+            .header { text-align: center; border-bottom: 2px solid #008080; padding-bottom: 10px; margin-bottom: 20px; }
+            .header h2 { color: #008080; margin: 0; font-size: 22px; }
+            .header p { font-size: 12px; color: #555; margin: 4px 0; }
+            table { width: 100%; border-collapse: collapse; margin-top: 15px; font-size: 12px; }
+            th, td { border: 1px solid #cbd5e1; padding: 8px 10px; text-align: left; }
+            th { background: #008080; color: #fff; }
+            tr:nth-child(even) { background: #f8fafc; }
+            .footer { margin-top: 30px; text-align: right; font-size: 11px; color: #64748b; }
+          </style>
+        </head>
+        <body>
+          <div class="header">
+            <h2>Delta Health Care Jatrabari Ltd.</h2>
+            <p>Official Appointments List & Summary Report</p>
+            <p>Generated Date: ${new Date().toLocaleDateString()}</p>
+          </div>
+          <table>
+            <thead>
+              <tr>
+                <th>Serial</th>
+                <th>Patient Name</th>
+                <th>Phone</th>
+                <th>Age</th>
+                <th>Doctor / Category</th>
+                <th>Date</th>
+                <th>Source</th>
+              </tr>
+            </thead>
+            <tbody>
+              ${rowsHtml || '<tr><td colspan="7" style="text-align:center;">No records found.</td></tr>'}
+            </tbody>
+          </table>
+          <div class="footer">
+            <p>Authorized Admin Signature ___________________</p>
+          </div>
+        </body>
+      </html>
+    `)
+    printWindow.document.close()
+    printWindow.focus()
+    setTimeout(() => {
+      printWindow.print()
+    }, 500)
+  }
 
   if (!isAuthenticated) {
     return (
@@ -241,23 +727,39 @@ export default function AdminPanel() {
               <h1 className="text-sm font-black text-slate-900">Admin Authentication</h1>
             </div>
           </div>
-          <form onSubmit={handleLogin} className="space-y-4">
+          <form onSubmit={handleLogin} className="space-y-4" autoComplete="off">
             <div>
               <label className="text-xs font-bold text-slate-700">Enter Admin Password</label>
-              <input 
-                type="password" 
-                required
-                value={passwordInput}
-                onChange={e => setPasswordInput(e.target.value)}
-                placeholder="delta123"
-                className="w-full border rounded-xl px-3 py-2.5 text-sm outline-none focus:ring-2 focus:ring-[#008080] mt-1"
-              />
+              <div className="relative mt-1">
+                <input
+                  type={showPassword ? 'text' : 'password'}
+                  required
+                  value={passwordInput}
+                  autoComplete="off"
+                  name="random_pwd_field_delta"
+                  onChange={e => setPasswordInput(e.target.value)}
+                  placeholder="Enter password"
+                  className="w-full border rounded-xl px-3 py-2.5 text-sm outline-none focus:ring-2 focus:ring-[#008080] pr-10"
+                />
+                <button
+                  type="button"
+                  onClick={() => setShowPassword(!showPassword)}
+                  className="absolute right-3 top-2.5 text-slate-500 hover:text-slate-800 text-sm font-bold focus:outline-none"
+                >
+                  {showPassword ? '👁️‍🗨️' : '👁️'}
+                </button>
+              </div>
             </div>
-            <button type="submit" className="w-full bg-[#008080] hover:bg-[#006666] text-white py-2.5 rounded-xl font-bold text-sm transition shadow-md">
+            <button
+              type="submit"
+              className="w-full bg-[#008080] hover:bg-[#006666] text-white py-2.5 rounded-xl font-bold text-sm transition shadow-md"
+            >
               Login to Admin Panel
             </button>
             <div className="text-center mt-4">
-              <a href="/" className="text-xs font-bold text-slate-500 hover:underline">← Back to Website</a>
+              <a href="/" className="text-xs font-bold text-slate-500 hover:underline">
+                ← Back to Website
+              </a>
             </div>
           </form>
         </div>
@@ -267,7 +769,7 @@ export default function AdminPanel() {
 
   return (
     <div className="min-h-screen bg-slate-100 flex flex-col font-sans text-slate-900">
-      <header className="bg-white border-b border-slate-200 py-3.5 px-6 sm:px-12 flex justify-between items-center shadow-xs">
+      <header className="bg-white border-b border-slate-200 py-3.5 px-6 sm:px-12 flex justify-between items-center shadow-xs sticky top-0 z-20">
         <div className="flex items-center gap-3">
           <div className="w-10 h-10 flex items-center justify-center bg-white rounded-xl p-1 border">
             <img src="/logo.png" alt="Logo" className="w-full h-full object-contain" />
@@ -277,41 +779,73 @@ export default function AdminPanel() {
             <h1 className="font-black text-sm text-slate-900">JATRABARI LTD. (Admin Dashboard)</h1>
           </div>
         </div>
-        <a href="/" className="text-xs font-bold text-[#008080] hover:underline bg-teal-50 px-3 py-1.5 rounded-lg border border-teal-200">
+        <a
+          href="/"
+          target="_blank"
+          rel="noreferrer"
+          className="text-xs font-bold text-[#008080] hover:underline bg-teal-50 px-3 py-1.5 rounded-lg border border-teal-200"
+        >
           View Live Website →
         </a>
       </header>
 
       <div className="flex flex-1 max-w-7xl w-full mx-auto p-6 gap-6">
         <aside className="w-64 bg-white border border-slate-200 rounded-2xl p-4 h-fit shadow-xs space-y-2">
-          <button 
+          <button
             onClick={() => setActiveTab('doctors')}
-            className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl font-bold text-sm transition ${activeTab === 'doctors' ? 'bg-[#008080] text-white shadow-sm' : 'text-slate-600 hover:bg-slate-50'}`}
+            className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl font-bold text-sm transition ${
+              activeTab === 'doctors' ? 'bg-[#008080] text-white shadow-sm' : 'text-slate-600 hover:bg-slate-50'
+            }`}
           >
             <span>👨‍⚕️</span> Doctor List ({doctors.length})
           </button>
-          <button 
+          <button
             onClick={() => setActiveTab('appointments')}
-            className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl font-bold text-sm transition ${activeTab === 'appointments' ? 'bg-[#008080] text-white shadow-sm' : 'text-slate-600 hover:bg-slate-50'}`}
+            className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl font-bold text-sm transition ${
+              activeTab === 'appointments' ? 'bg-[#008080] text-white shadow-sm' : 'text-slate-600 hover:bg-slate-50'
+            }`}
           >
             <span>📋</span> Appointments
           </button>
-          <button 
+          <button
             onClick={() => setActiveTab('booking')}
-            className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl font-bold text-sm transition ${activeTab === 'booking' ? 'bg-[#008080] text-white shadow-sm' : 'text-slate-600 hover:bg-slate-50'}`}
+            className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl font-bold text-sm transition ${
+              activeTab === 'booking' ? 'bg-[#008080] text-white shadow-sm' : 'text-slate-600 hover:bg-slate-50'
+            }`}
           >
             <span>➕</span> Booking Appointment
+          </button>
+          <button
+            onClick={() => setActiveTab('quick-reserve')}
+            className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl font-bold text-sm transition ${
+              activeTab === 'quick-reserve' ? 'bg-[#008080] text-white shadow-sm' : 'text-slate-600 hover:bg-slate-50'
+            }`}
+          >
+            <span>⚡</span> Quick Reserve Form
+          </button>
+          <button
+            onClick={() => setActiveTab('quick-reserve-list')}
+            className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl font-bold text-sm transition ${
+              activeTab === 'quick-reserve-list' ? 'bg-[#008080] text-white shadow-sm' : 'text-slate-600 hover:bg-slate-50'
+            }`}
+          >
+            <span>🚨</span> Quick Reserve List
           </button>
         </aside>
 
         <main className="flex-1 bg-white border border-slate-200 rounded-2xl p-6 shadow-xs">
-          
           {activeTab === 'doctors' && (
             <div>
               <div className="flex justify-between items-center mb-6">
-                <h2 className="text-xl font-black text-slate-900">Doctor List ({doctors.length})</h2>
-                <button 
-                  onClick={() => { resetDocForm(); setIsAddModalOpen(true); }}
+                <div>
+                  <h2 className="text-xl font-black text-slate-900">Doctor List ({doctors.length})</h2>
+                  <p className="text-xs text-slate-500">Live database synchronized doctor directory</p>
+                </div>
+                <button
+                  onClick={() => {
+                    resetDocForm()
+                    setIsAddModalOpen(true)
+                  }}
                   className="bg-[#008080] hover:bg-[#006666] text-white px-4 py-2 rounded-xl font-bold text-sm transition shadow-sm flex items-center gap-2"
                 >
                   <span>+</span> Add Doctor
@@ -325,38 +859,59 @@ export default function AdminPanel() {
                       <th className="p-3">NO</th>
                       <th className="p-3">Doctor Name & Picture</th>
                       <th className="p-3">Specialization</th>
-                      <th className="p-3">Status</th>
+                      <th className="p-3">Schedule Days</th>
+                      <th className="p-3">Fee</th>
+                      <th className="p-3 text-center">Status</th>
                       <th className="p-3 text-right">Action</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y text-sm">
                     {doctors.map((doc, idx) => (
-                      <tr key={doc.id} className="hover:bg-slate-50">
+                      <tr key={doc.id || idx} className="hover:bg-slate-50 transition">
                         <td className="p-3 font-bold text-slate-700">{idx + 1}</td>
                         <td className="p-3 flex items-center gap-3">
-                          <img 
-                            src={doc.image_url || "/doctors/doctor-1.png"} 
-                            alt={doc.name} 
-                            onError={(e: any) => { e.target.src = "/doctors/doctor-1.png"; }}
-                            className="w-10 h-10 rounded-full object-cover border object-top" 
+                          <img
+                            src={doc.image_url || '/doctors/doctor-1.png'}
+                            alt={doc.name}
+                            onError={(e: any) => {
+                              e.target.src = '/doctors/doctor-1.png'
+                            }}
+                            className="w-10 h-10 rounded-full object-cover border object-top shadow-xs"
                           />
-                          <span className="font-bold text-slate-900">{doc.name}</span>
+                          <div>
+                            <span className="font-bold text-slate-900 block">{doc.name}</span>
+                            <span className="text-[11px] text-slate-500">{doc.degree || 'Specialist'}</span>
+                          </div>
                         </td>
                         <td className="p-3 text-slate-600 font-semibold">{doc.specialization}</td>
-                        <td className="p-3">
-                          <span className="px-2.5 py-1 rounded-md text-xs font-bold bg-sky-100 text-sky-700">
-                            {doc.status || 'Present'}
-                          </span>
+                        <td className="p-3 text-xs text-slate-600">
+                          {doc.days && doc.days.length > 0 ? doc.days.join(', ') : 'Daily'}
+                        </td>
+                        <td className="p-3 font-semibold text-xs text-slate-700">
+                          {doc.follow_up_fee || '500 BDT'}
+                        </td>
+                        <td className="p-3 text-center">
+                          <button
+                            onClick={() => handleInlineStatusToggle(doc)}
+                            className={`px-3 py-1 rounded-full text-xs font-bold transition shadow-xs ${
+                              doc.status === 'Present'
+                                ? 'bg-emerald-100 text-emerald-800 hover:bg-emerald-200 border border-emerald-300'
+                                : 'bg-rose-100 text-rose-800 hover:bg-rose-200 border border-rose-300'
+                            }`}
+                            title="Click to toggle status"
+                          >
+                            {doc.status}
+                          </button>
                         </td>
                         <td className="p-3 text-right space-x-2">
-                          <button 
+                          <button
                             onClick={() => handleEditClick(doc)}
                             className="bg-slate-100 hover:bg-slate-200 text-slate-700 p-2 rounded-lg text-xs font-bold transition"
-                            title="Edit Schedule & Info"
+                            title="Edit Doctor & Schedule"
                           >
                             ✏️
                           </button>
-                          <button 
+                          <button
                             onClick={() => setDeleteModalDoc(doc)}
                             className="bg-rose-50 hover:bg-rose-100 text-rose-600 p-2 rounded-lg text-xs font-bold transition"
                             title="Delete Doctor"
@@ -372,61 +927,78 @@ export default function AdminPanel() {
             </div>
           )}
 
-          {activeTab === 'appointments' && (
+          {(activeTab === 'appointments' || activeTab === 'quick-reserve-list') && (
             <div>
               <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center mb-6 gap-3">
                 <div>
-                  <h2 className="text-xl font-black text-slate-900">Appointments ({filteredAppointments.length})</h2>
-                  <p className="text-xs text-slate-500">Filter and review patient bookings</p>
+                  <h2 className="text-xl font-black text-slate-900">
+                    {activeTab === 'quick-reserve-list' ? 'Quick Reserve List' : 'Appointments'} (
+                    {filteredAppointments.length})
+                  </h2>
+                  <p className="text-xs text-slate-500">Review patient bookings</p>
                 </div>
-                <button 
-                  onClick={downloadCSV}
-                  className="bg-emerald-600 hover:bg-emerald-700 text-white px-4 py-2 rounded-xl font-bold text-sm transition shadow-sm"
+                <button
+                  onClick={downloadPDFReport}
+                  className="bg-red-600 hover:bg-red-700 text-white px-4 py-2 rounded-xl font-bold text-sm transition shadow-sm flex items-center gap-2"
                 >
-                  📥 Download CSV Report
+                  <span>📥</span> Download PDF
                 </button>
               </div>
 
-              {/* Filter Controls Bar */}
-              <div className="bg-slate-50 p-4 rounded-xl border border-slate-200 mb-6 flex flex-wrap gap-3 items-center">
-                <div className="flex-1 min-w-[200px]">
-                  <label className="text-[11px] font-bold text-slate-600 block mb-1">Filter by Doctor</label>
-                  <select 
-                    value={filterDoctor}
-                    onChange={e => setFilterDoctor(e.target.value)}
-                    className="w-full border rounded-lg px-3 py-1.5 text-xs bg-white font-medium"
-                  >
-                    <option value="">All Doctors</option>
-                    {doctors.map(d => (
-                      <option key={d.id} value={d.id}>{d.name} ({d.specialization})</option>
-                    ))}
-                  </select>
-                </div>
-
-                <div className="flex-1 min-w-[180px]">
-                  <label className="text-[11px] font-bold text-slate-600 block mb-1">Filter by Date</label>
-                  <input 
-                    type="date"
-                    value={filterDate}
-                    onChange={e => setFilterDate(e.target.value)}
-                    className="w-full border rounded-lg px-3 py-1.5 text-xs bg-white font-medium"
-                  />
-                </div>
-
-                {(filterDoctor || filterDate) && (
-                  <div className="self-end">
-                    <button 
-                      onClick={() => { setFilterDoctor(''); setFilterDate(''); }}
-                      className="bg-slate-200 hover:bg-slate-300 text-slate-700 px-3 py-1.5 rounded-lg text-xs font-bold transition"
+              {activeTab === 'appointments' && (
+                <div className="bg-slate-50 p-4 rounded-xl border border-slate-200 mb-6 flex flex-wrap gap-3 items-center">
+                  <div className="flex-1 min-w-[200px]">
+                    <label className="text-[11px] font-bold text-slate-600 block mb-1">Filter by Doctor</label>
+                    <select
+                      value={filterDoctor}
+                      onChange={e => setFilterDoctor(e.target.value)}
+                      className="w-full border rounded-lg px-3 py-1.5 text-xs bg-white font-medium"
                     >
-                      Clear Filters
-                    </button>
+                      <option value="">All Doctors</option>
+                      {doctors.map(d => (
+                        <option key={d.id} value={d.id}>
+                          {d.name} ({d.specialization})
+                        </option>
+                      ))}
+                    </select>
                   </div>
-                )}
-              </div>
+
+                  <div className="flex-1 min-w-[180px]">
+                    <label className="text-[11px] font-bold text-slate-600 block mb-1">
+                      Filter by Date (7 Days)
+                    </label>
+                    <select
+                      value={filterDateMode}
+                      onChange={e => setFilterDateMode(e.target.value)}
+                      className="w-full border rounded-lg px-3 py-1.5 text-xs bg-white font-medium"
+                    >
+                      <option value="all">All Dates (Aksathe)</option>
+                      {getNext7Days().map(dateStr => (
+                        <option key={dateStr} value={dateStr}>
+                          {dateStr}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+
+                  {(filterDoctor || filterDateMode !== 'all') && (
+                    <div className="self-end">
+                      <button
+                        onClick={() => {
+                          setFilterDoctor('')
+                          setFilterDateMode('all')
+                        }}
+                        className="bg-slate-200 hover:bg-slate-300 text-slate-700 px-3 py-1.5 rounded-lg text-xs font-bold transition"
+                      >
+                        Clear Filters
+                      </button>
+                    </div>
+                  )}
+                </div>
+              )}
 
               {filteredAppointments.length === 0 ? (
-                <p className="text-sm text-slate-500 text-center py-6">No appointments found matching your filter.</p>
+                <p className="text-sm text-slate-500 text-center py-6">No records found.</p>
               ) : (
                 <div className="overflow-x-auto">
                   <table className="w-full text-left border-collapse">
@@ -436,32 +1008,42 @@ export default function AdminPanel() {
                         <th className="p-3">Patient Name</th>
                         <th className="p-3">Age</th>
                         <th className="p-3">Phone</th>
-                        <th className="p-3">Doctor</th>
+                        <th className="p-3">Doctor / Category</th>
                         <th className="p-3">Date</th>
                         <th className="p-3">Note</th>
-                        <th className="p-3">Status</th>
+                        <th className="p-3">Source</th>
                         <th className="p-3 text-right">Action</th>
                       </tr>
                     </thead>
                     <tbody className="divide-y text-sm">
-                      {filteredAppointments.map(app => {
-                        const matchedDoc = doctors.find(d => d.id.toString() === app.doctor_id?.toString());
+                      {filteredAppointments.map((app, idx) => {
+                        const matchedDoc = doctors.find(d => d.id.toString() === app.doctor_id?.toString())
+                        const isFromAdmin = app.patient_type === 'Admin'
+
                         return (
-                          <tr key={app.id} className="hover:bg-slate-50">
-                            <td className="p-3 font-mono font-bold text-[#008080]">#{app.serial_number}</td>
+                          <tr key={app.id || idx} className="hover:bg-slate-50 transition">
+                            <td className="p-3 font-mono font-bold text-[#008080]">#{idx + 1}</td>
                             <td className="p-3 font-semibold text-slate-900">{app.patient_name}</td>
                             <td className="p-3 text-slate-600">{app.age || '-'}</td>
                             <td className="p-3 text-slate-600 font-mono text-xs">{app.phone}</td>
-                            <td className="p-3 text-slate-800 font-medium">{matchedDoc ? matchedDoc.name : `Dr. #${app.doctor_id}`}</td>
+                            <td className="p-3 text-slate-800 font-medium">
+                              {matchedDoc ? matchedDoc.name : app.doctor_id}
+                            </td>
                             <td className="p-3 text-slate-600">{app.booking_date}</td>
                             <td className="p-3 text-slate-500 text-xs italic">{app.symptoms || 'None'}</td>
                             <td className="p-3">
-                              <span className="bg-emerald-100 text-emerald-700 px-2.5 py-1 rounded-md text-xs font-bold">
-                                {app.status}
+                              <span
+                                className={`px-2.5 py-1 rounded text-[11px] font-bold ${
+                                  isFromAdmin
+                                    ? 'bg-purple-100 text-purple-700 border border-purple-200'
+                                    : 'bg-emerald-100 text-emerald-800 border border-emerald-200'
+                                }`}
+                              >
+                                {isFromAdmin ? 'Admin' : 'Online'}
                               </span>
                             </td>
                             <td className="p-3 text-right">
-                              <button 
+                              <button
                                 onClick={() => handleDeleteAppointment(app.id)}
                                 className="bg-rose-50 hover:bg-rose-100 text-rose-600 px-3 py-1 rounded-lg text-xs font-bold transition"
                               >
@@ -469,7 +1051,7 @@ export default function AdminPanel() {
                               </button>
                             </td>
                           </tr>
-                        );
+                        )
                       })}
                     </tbody>
                   </table>
@@ -480,12 +1062,17 @@ export default function AdminPanel() {
 
           {activeTab === 'booking' && (
             <div className="max-w-xl mx-auto">
-              <h2 className="text-xl font-black text-slate-900 mb-4">Book Appointment (Admin)</h2>
+              <h2 className="text-xl font-black text-slate-900 mb-4">Book Appointment (Admin Counter)</h2>
               {bookingSubmitted ? (
                 <div className="text-center py-8">
-                  <div className="w-16 h-16 bg-emerald-100 text-emerald-600 rounded-full flex items-center justify-center mx-auto text-3xl mb-4 font-bold">✓</div>
+                  <div className="w-16 h-16 bg-emerald-100 text-emerald-600 rounded-full flex items-center justify-center mx-auto text-3xl mb-4 font-bold">
+                    ✓
+                  </div>
                   <h3 className="text-xl font-bold text-slate-900">Appointment Booked Successfully!</h3>
-                  <button onClick={() => setBookingSubmitted(false)} className="mt-4 bg-[#008080] text-white px-6 py-2 rounded-xl text-sm font-semibold">
+                  <button
+                    onClick={() => setBookingSubmitted(false)}
+                    className="mt-4 bg-[#008080] text-white px-6 py-2 rounded-xl text-sm font-semibold"
+                  >
                     Book Another
                   </button>
                 </div>
@@ -493,194 +1080,442 @@ export default function AdminPanel() {
                 <form onSubmit={handleAdminBookingSubmit} className="space-y-4">
                   <div className="grid grid-cols-2 gap-3">
                     <div>
-                      <label className="text-xs font-bold text-slate-700">Patient Name</label>
-                      <input 
-                        type="text" 
-                        required 
-                        value={adminBooking.name}
-                        onChange={e => setAdminBooking({...adminBooking, name: e.target.value})}
-                        placeholder="Full Name" 
-                        className="w-full border rounded-xl px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-teal-500 mt-1" 
-                      />
-                    </div>
-                    <div>
-                      <label className="text-xs font-bold text-slate-700">Phone Number</label>
-                      <input 
-                        type="tel" 
-                        required 
-                        value={adminBooking.phone}
-                        onChange={e => setAdminBooking({...adminBooking, phone: e.target.value})}
-                        placeholder="017XXXXXXXX" 
-                        className="w-full border rounded-xl px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-teal-500 mt-1" 
-                      />
-                    </div>
-                  </div>
-
-                  <div className="grid grid-cols-2 gap-3">
-                    <div>
-                      <label className="text-xs font-bold text-slate-700">Specialization</label>
-                      <select 
+                      <label className="text-xs font-bold text-slate-700">
+                        Specialization <span className="text-rose-500">*</span>
+                      </label>
+                      <select
                         required
                         value={adminBooking.specialization}
-                        onChange={e => setAdminBooking({...adminBooking, specialization: e.target.value, doctor_id: ''})}
+                        onChange={e => {
+                          setAdminBooking({
+                            ...adminBooking,
+                            specialization: e.target.value,
+                            doctor_id: '',
+                            booking_date: ''
+                          })
+                          setSelectedAdminDoctor(null)
+                          setAvailableDatesForAdminDoc([])
+                        }}
                         className="w-full border rounded-xl px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-teal-500 bg-white mt-1"
                       >
                         <option value="">Select Specialization</option>
-                        {Array.from(new Set(doctors.map(d => d.specialization).filter(Boolean))).map((spec: any, idx) => (
-                          <option key={idx} value={spec}>{spec}</option>
-                        ))}
+                        {Array.from(new Set(doctors.map(d => d.specialization).filter(Boolean))).map(
+                          (spec: any, idx) => (
+                            <option key={idx} value={spec}>
+                              {spec}
+                            </option>
+                          )
+                        )}
                       </select>
                     </div>
                     <div>
-                      <label className="text-xs font-bold text-slate-700">Select Doctor</label>
-                      <select 
+                      <label className="text-xs font-bold text-slate-700">
+                        Select Doctor <span className="text-rose-500">*</span>
+                      </label>
+                      <select
                         required
                         value={adminBooking.doctor_id}
-                        onChange={e => setAdminBooking({...adminBooking, doctor_id: e.target.value})}
+                        onChange={e => handleAdminDoctorChange(e.target.value)}
                         className="w-full border rounded-xl px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-teal-500 bg-white mt-1"
                       >
                         <option value="">Select Doctor</option>
-                        {doctors.filter(d => !adminBooking.specialization || d.specialization === adminBooking.specialization).map(doc => (
-                          <option key={doc.id} value={doc.id}>{doc.name} ({doc.specialization})</option>
-                        ))}
+                        {doctors
+                          .filter(
+                            d => !adminBooking.specialization || d.specialization === adminBooking.specialization
+                          )
+                          .map(doc => (
+                            <option key={doc.id} value={doc.id}>
+                              {doc.name} ({doc.status === 'Absent' ? '🔴 Absent' : '🟢 Present'})
+                            </option>
+                          ))}
                       </select>
+                    </div>
+                  </div>
+
+                  {selectedAdminDoctor && (
+                    <div className="bg-teal-50 border border-teal-200 rounded-xl p-3 text-xs text-slate-800 flex flex-col gap-1.5">
+                      <div className="flex justify-between items-center">
+                        <p className="font-bold text-slate-900 text-sm">{selectedAdminDoctor.name}</p>
+                        <span
+                          className={`px-2 py-0.5 rounded text-[10px] font-bold ${
+                            selectedAdminDoctor.status === 'Present'
+                              ? 'bg-emerald-100 text-emerald-800'
+                              : 'bg-rose-100 text-rose-800'
+                          }`}
+                        >
+                          {selectedAdminDoctor.status}
+                        </span>
+                      </div>
+                      <p className="text-slate-700 font-semibold">{selectedAdminDoctor.degree}</p>
+                      <div className="text-[11px] font-bold text-[#008080]">
+                        <span>Days: {selectedAdminDoctor.days?.join(', ') || 'Everyday'}</span>
+                        <br />
+                        <span>Sitting Hours: {selectedAdminDoctor.sitting_hours}</span>
+                        <br />
+                        <span>Fee: {selectedAdminDoctor.follow_up_fee || '500 BDT'}</span>
+                      </div>
+                    </div>
+                  )}
+
+                  <div>
+                    <label className="text-xs font-bold text-slate-700 block mb-1">
+                      Select Date (Next 3 Available Days) <span className="text-rose-500">*</span>
+                    </label>
+                    {isAdminDoctorAbsent ? (
+                      <p className="text-xs text-rose-600 font-bold bg-rose-50 p-2.5 rounded-xl border border-rose-200">
+                        ⚠️ This doctor is currently marked as ABSENT. No bookings can be scheduled right now.
+                      </p>
+                    ) : availableDatesForAdminDoc.length === 0 ? (
+                      <p className="text-xs text-slate-500 bg-slate-50 p-2.5 rounded-xl border">
+                        {selectedAdminDoctor ? 'No available schedule days found.' : 'Please select a doctor first.'}
+                      </p>
+                    ) : (
+                      <div className="grid grid-cols-3 gap-2">
+                        {availableDatesForAdminDoc.map((item, idx) => (
+                          <button
+                            type="button"
+                            key={idx}
+                            onClick={() => setAdminBooking({ ...adminBooking, booking_date: item.dateStr })}
+                            className={`p-2.5 rounded-xl text-xs font-semibold border transition text-center ${
+                              adminBooking.booking_date === item.dateStr
+                                ? 'bg-[#008080] text-white border-[#008080] shadow-sm'
+                                : 'bg-slate-50 text-slate-700 border-slate-200 hover:bg-slate-100'
+                            }`}
+                          >
+                            {item.display}
+                          </button>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+
+                  <div className="grid grid-cols-2 gap-3">
+                    <div>
+                      <label className="text-xs font-bold text-slate-700">
+                        Patient Name <span className="text-rose-500">*</span>
+                      </label>
+                      <input
+                        type="text"
+                        required
+                        value={adminBooking.name}
+                        onChange={e => setAdminBooking({ ...adminBooking, name: e.target.value })}
+                        placeholder="Full Name"
+                        className="w-full border rounded-xl px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-teal-500 mt-1"
+                      />
+                    </div>
+                    <div>
+                      <label className="text-xs font-bold text-slate-700">
+                        Phone Number <span className="text-rose-500">*</span>
+                      </label>
+                      <input
+                        type="tel"
+                        required
+                        maxLength={11}
+                        value={adminBooking.phone}
+                        onChange={e =>
+                          setAdminBooking({ ...adminBooking, phone: e.target.value.replace(/\D/g, '') })
+                        }
+                        placeholder="017XXXXXXXX"
+                        className="w-full border rounded-xl px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-teal-500 mt-1 font-mono"
+                      />
                     </div>
                   </div>
 
                   <div className="grid grid-cols-2 gap-3">
                     <div>
-                      <label className="text-xs font-bold text-slate-700">Booking Date</label>
-                      <input 
-                        type="date" 
-                        required 
-                        value={adminBooking.booking_date}
-                        onChange={e => setAdminBooking({...adminBooking, booking_date: e.target.value})}
-                        className="w-full border rounded-xl px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-teal-500 mt-1" 
+                      <label className="text-xs font-bold text-slate-700">Age</label>
+                      <input
+                        type="number"
+                        value={adminBooking.age}
+                        onChange={e => setAdminBooking({ ...adminBooking, age: e.target.value })}
+                        placeholder="Age"
+                        className="w-full border rounded-xl px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-teal-500 mt-1"
                       />
                     </div>
                     <div>
-                      <label className="text-xs font-bold text-slate-700">Age</label>
-                      <input 
-                        type="number" 
-                        value={adminBooking.age}
-                        onChange={e => setAdminBooking({...adminBooking, age: e.target.value})}
-                        placeholder="Age" 
-                        className="w-full border rounded-xl px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-teal-500 mt-1" 
+                      <label className="text-xs font-bold text-slate-700">Note</label>
+                      <input
+                        type="text"
+                        value={adminBooking.note}
+                        onChange={e => setAdminBooking({ ...adminBooking, note: e.target.value })}
+                        placeholder="Add a note..."
+                        className="w-full border rounded-xl px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-teal-500 mt-1"
                       />
                     </div>
                   </div>
 
-                  <div>
-                    <label className="text-xs font-bold text-slate-700">Note</label>
-                    <input 
-                      type="text" 
-                      value={adminBooking.note}
-                      onChange={e => setAdminBooking({...adminBooking, note: e.target.value})}
-                      placeholder="Add a note..." 
-                      className="w-full border rounded-xl px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-teal-500 mt-1" 
-                    />
-                  </div>
-
-                  <button type="submit" className="w-full bg-[#008080] hover:bg-[#006666] text-white py-3 rounded-xl font-bold text-sm transition shadow-md">
-                    Confirm Appointment
+                  <button
+                    type="submit"
+                    disabled={isAdminDoctorAbsent || availableDatesForAdminDoc.length === 0}
+                    className={`w-full py-3 rounded-xl font-bold text-sm transition shadow-md ${
+                      isAdminDoctorAbsent || availableDatesForAdminDoc.length === 0
+                        ? 'bg-slate-300 text-slate-500 cursor-not-allowed'
+                        : 'bg-[#008080] hover:bg-[#006666] text-white'
+                    }`}
+                  >
+                    Confirm Appointment (Counter Entry)
                   </button>
                 </form>
               )}
             </div>
           )}
 
+          {activeTab === 'quick-reserve' && (
+            <div className="max-w-xl mx-auto">
+              <h3 className="text-xl font-black text-slate-900 mb-4">Quick Reserve (Emergency Slots)</h3>
+              {quickSubmitted ? (
+                <div className="text-center py-8">
+                  <div className="w-16 h-16 bg-emerald-100 text-emerald-600 rounded-full flex items-center justify-center mx-auto text-3xl mb-4 font-bold">
+                    ✓
+                  </div>
+                  <h3 className="text-xl font-bold text-slate-900">Emergency Slot Confirmed!</h3>
+                  <button
+                    onClick={() => setQuickSubmitted(false)}
+                    className="mt-4 bg-[#008080] text-white px-6 py-2 rounded-xl text-sm font-semibold"
+                  >
+                    Reserve Another
+                  </button>
+                </div>
+              ) : (
+                <div>
+                  <div className="grid grid-cols-5 gap-2 mb-4">
+                    {['NICU', 'PICU', 'ICU', 'General', 'OPD'].map(type => (
+                      <button
+                        key={type}
+                        type="button"
+                        onClick={() => setQuickReserveType(type)}
+                        className={`py-2 px-1 rounded-xl text-xs font-bold border transition ${
+                          quickReserveType === type
+                            ? 'bg-[#008080] text-white border-[#008080] shadow-sm'
+                            : 'bg-slate-50 text-slate-700 border-slate-200 hover:bg-slate-100'
+                        }`}
+                      >
+                        {type}
+                      </button>
+                    ))}
+                  </div>
+
+                  <form onSubmit={handleAdminQuickSubmit} className="space-y-3">
+                    <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+                      <div className="sm:col-span-2">
+                        <label className="text-xs font-bold text-slate-700">
+                          Patient Name <span className="text-rose-500">*</span>
+                        </label>
+                        <input
+                          type="text"
+                          required
+                          value={quickForm.name}
+                          onChange={e => setQuickForm({ ...quickForm, name: e.target.value })}
+                          placeholder="Patient Full Name"
+                          className="w-full border rounded-xl px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-teal-500 mt-1"
+                        />
+                      </div>
+                      <div>
+                        <label className="text-xs font-bold text-slate-700">Age</label>
+                        <input
+                          type="number"
+                          value={quickForm.age}
+                          onChange={e => setQuickForm({ ...quickForm, age: e.target.value })}
+                          placeholder="Age"
+                          className="w-full border rounded-xl px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-teal-500 mt-1"
+                        />
+                      </div>
+                    </div>
+
+                    <div>
+                      <label className="text-xs font-bold text-slate-700">
+                        Contact Number <span className="text-rose-500">*</span>
+                      </label>
+                      <input
+                        type="tel"
+                        required
+                        maxLength={11}
+                        value={quickForm.contact}
+                        onChange={e =>
+                          setQuickForm({ ...quickForm, contact: e.target.value.replace(/\D/g, '') })
+                        }
+                        placeholder="017XXXXXXXX"
+                        className="w-full border rounded-xl px-3 py-2 text-sm font-mono outline-none focus:ring-2 focus:ring-teal-500 mt-1"
+                      />
+                    </div>
+
+                    <button
+                      type="submit"
+                      className="w-full bg-[#008080] hover:bg-[#006666] text-white py-3 rounded-xl font-bold text-sm transition shadow-md mt-2"
+                    >
+                      Confirm Quick Reservation (Admin)
+                    </button>
+                  </form>
+                </div>
+              )}
+            </div>
+          )}
         </main>
       </div>
 
       {isAddModalOpen && (
         <div className="fixed inset-0 bg-black/50 backdrop-blur-xs flex items-center justify-center p-4 z-50 overflow-y-auto">
           <div className="bg-white rounded-2xl max-w-2xl w-full p-6 sm:p-8 shadow-2xl relative max-h-[90vh] overflow-y-auto">
-            <button onClick={() => setIsAddModalOpen(false)} className="absolute top-4 right-4 text-slate-400 hover:text-slate-600 font-bold text-lg">✕</button>
-            <h3 className="text-xl font-black text-slate-900 mb-4">{isEditMode ? 'Edit Doctor & Schedule' : 'Add New Doctor'}</h3>
-            
+            <button
+              onClick={() => setIsAddModalOpen(false)}
+              className="absolute top-4 right-4 text-slate-400 hover:text-slate-600 font-bold text-lg"
+            >
+              ✕
+            </button>
+            <h3 className="text-xl font-black text-slate-900 mb-1">
+              {isEditMode ? 'Edit Doctor & Schedule' : 'Add New Doctor'}
+            </h3>
+            <p className="text-xs text-slate-400 mb-4">
+              Changes directly sync with live website & database.
+            </p>
+
             <form onSubmit={handleSaveDoctor} className="space-y-4">
               <div className="grid grid-cols-2 gap-3">
                 <div>
-                  <label className="text-xs font-bold text-slate-700">Doctor Name</label>
-                  <input type="text" required value={docForm.name} onChange={e => setDocForm({...docForm, name: e.target.value})} placeholder="Dr. Name" className="w-full border rounded-xl px-3 py-2 text-sm mt-1" />
+                  <label className="text-xs font-bold text-slate-700">Doctor Name *</label>
+                  <input
+                    type="text"
+                    required
+                    value={docForm.name}
+                    onChange={e => setDocForm({ ...docForm, name: e.target.value })}
+                    placeholder="Dr. Name"
+                    className="w-full border rounded-xl px-3 py-2 text-sm mt-1 focus:ring-2 focus:ring-teal-500 outline-none"
+                  />
                 </div>
                 <div>
                   <label className="text-xs font-bold text-slate-700">Doctor No (ID)</label>
-                  <input type="text" value={docForm.doctor_no} onChange={e => setDocForm({...docForm, doctor_no: e.target.value})} placeholder="1" className="w-full border rounded-xl px-3 py-2 text-sm mt-1" />
+                  <input
+                    type="text"
+                    value={docForm.doctor_no}
+                    onChange={e => setDocForm({ ...docForm, doctor_no: e.target.value })}
+                    placeholder="1"
+                    className="w-full border rounded-xl px-3 py-2 text-sm mt-1 focus:ring-2 focus:ring-teal-500 outline-none"
+                  />
                 </div>
               </div>
 
               <div className="grid grid-cols-2 gap-3">
                 <div>
                   <label className="text-xs font-bold text-slate-700">Degree</label>
-                  <input type="text" value={docForm.degree} onChange={e => setDocForm({...docForm, degree: e.target.value})} placeholder="MBBS, FCPS" className="w-full border rounded-xl px-3 py-2 text-sm mt-1" />
+                  <input
+                    type="text"
+                    value={docForm.degree}
+                    onChange={e => setDocForm({ ...docForm, degree: e.target.value })}
+                    placeholder="MBBS, FCPS"
+                    className="w-full border rounded-xl px-3 py-2 text-sm mt-1 focus:ring-2 focus:ring-teal-500 outline-none"
+                  />
                 </div>
                 <div>
                   <label className="text-xs font-bold text-slate-700">Phone Number</label>
-                  <input type="text" value={docForm.phone} onChange={e => setDocForm({...docForm, phone: e.target.value})} placeholder="01700-000000" className="w-full border rounded-xl px-3 py-2 text-sm mt-1" />
+                  <input
+                    type="text"
+                    value={docForm.phone}
+                    onChange={e => setDocForm({ ...docForm, phone: e.target.value })}
+                    placeholder="01700-000000"
+                    className="w-full border rounded-xl px-3 py-2 text-sm mt-1 focus:ring-2 focus:ring-teal-500 outline-none"
+                  />
                 </div>
               </div>
 
               <div className="grid grid-cols-2 gap-3">
                 <div>
                   <label className="text-xs font-bold text-slate-700">Branch / Workplace</label>
-                  <input type="text" value={docForm.branch} onChange={e => setDocForm({...docForm, branch: e.target.value})} placeholder="Dhaka Medical / Delta" className="w-full border rounded-xl px-3 py-2 text-sm mt-1" />
+                  <input
+                    type="text"
+                    value={docForm.branch}
+                    onChange={e => setDocForm({ ...docForm, branch: e.target.value })}
+                    placeholder="Dhaka Medical / Delta"
+                    className="w-full border rounded-xl px-3 py-2 text-sm mt-1 focus:ring-2 focus:ring-teal-500 outline-none"
+                  />
                 </div>
                 <div>
                   <label className="text-xs font-bold text-slate-700">Follow Up Fee</label>
-                  <input type="text" value={docForm.follow_up_fee} onChange={e => setDocForm({...docForm, follow_up_fee: e.target.value})} placeholder="500 BDT" className="w-full border rounded-xl px-3 py-2 text-sm mt-1" />
+                  <input
+                    type="text"
+                    value={docForm.follow_up_fee}
+                    onChange={e => setDocForm({ ...docForm, follow_up_fee: e.target.value })}
+                    placeholder="500 BDT"
+                    className="w-full border rounded-xl px-3 py-2 text-sm mt-1 focus:ring-2 focus:ring-teal-500 outline-none"
+                  />
                 </div>
               </div>
 
               <div className="grid grid-cols-2 gap-3">
                 <div>
-                  <label className="text-xs font-bold text-slate-700">Specialization</label>
-                  <input type="text" required value={docForm.specialization} onChange={e => setDocForm({...docForm, specialization: e.target.value})} placeholder="Cardiologist" className="w-full border rounded-xl px-3 py-2 text-sm mt-1" />
+                  <label className="text-xs font-bold text-slate-700">Specialization *</label>
+                  <input
+                    type="text"
+                    required
+                    value={docForm.specialization}
+                    onChange={e => setDocForm({ ...docForm, specialization: e.target.value })}
+                    placeholder="Cardiologist"
+                    className="w-full border rounded-xl px-3 py-2 text-sm mt-1 focus:ring-2 focus:ring-teal-500 outline-none"
+                  />
                 </div>
                 <div>
                   <label className="text-xs font-bold text-slate-700">Status</label>
-                  <select value={docForm.status} onChange={e => setDocForm({...docForm, status: e.target.value})} className="w-full border rounded-xl px-3 py-2 text-sm mt-1 bg-white">
-                    <option value="Present">Present</option>
-                    <option value="Absent">Absent</option>
+                  <select
+                    value={docForm.status}
+                    onChange={e => setDocForm({ ...docForm, status: e.target.value as any })}
+                    className="w-full border rounded-xl px-3 py-2 text-sm mt-1 bg-white focus:ring-2 focus:ring-teal-500 outline-none font-bold"
+                  >
+                    <option value="Present">Present (🟢 Active in Website)</option>
+                    <option value="Absent">Absent (🔴 Auto reset after 2:00 AM)</option>
                   </select>
                 </div>
               </div>
 
               <div>
                 <label className="text-xs font-bold text-slate-700">Picture URL</label>
-                <input type="text" value={docForm.image_url} onChange={e => setDocForm({...docForm, image_url: e.target.value})} placeholder="https://..." className="w-full border rounded-xl px-3 py-2 text-sm mt-1" />
+                <input
+                  type="text"
+                  value={docForm.image_url}
+                  onChange={e => setDocForm({ ...docForm, image_url: e.target.value })}
+                  placeholder="/doctors/doctor-1.png"
+                  className="w-full border rounded-xl px-3 py-2 text-sm mt-1 focus:ring-2 focus:ring-teal-500 outline-none"
+                />
               </div>
 
               <div className="border-t pt-3">
-                <label className="text-xs font-extrabold text-slate-800 block mb-2">Available Days & Time Slots</label>
+                <label className="text-xs font-extrabold text-slate-800 block mb-2">
+                  Available Days & Time Slots (ডাক্তার কোন কোন বার বসেন টিক দিন)
+                </label>
                 <div className="space-y-2">
-                  {daysOfWeek.map(day => (
-                    <div key={day} className="flex items-center justify-between bg-slate-50 p-2.5 rounded-xl border">
-                      <label className="flex items-center gap-2 cursor-pointer text-sm font-semibold">
-                        <input 
-                          type="checkbox" 
+                  {DAYS_OF_WEEK.map(day => (
+                    <div
+                      key={day}
+                      className={`flex items-center justify-between p-2.5 rounded-xl border transition ${
+                        docForm.schedule[day]?.active ? 'bg-teal-50/60 border-teal-200' : 'bg-slate-50 border-slate-200'
+                      }`}
+                    >
+                      <label className="flex items-center gap-2.5 cursor-pointer text-sm font-semibold select-none">
+                        <input
+                          type="checkbox"
                           checked={docForm.schedule[day]?.active || false}
                           onChange={() => handleScheduleToggle(day)}
-                          className="w-4 h-4 accent-[#008080]"
+                          className="w-4 h-4 accent-[#008080] rounded"
                         />
-                        {day}
+                        <span className={docForm.schedule[day]?.active ? 'text-teal-900 font-bold' : 'text-slate-600'}>
+                          {day}
+                        </span>
                       </label>
+
                       {docForm.schedule[day]?.active && (
                         <div className="flex items-center gap-2">
-                          <input 
-                            type="text" 
+                          <input
+                            type="text"
                             value={docForm.schedule[day].start}
                             onChange={e => handleTimeChange(day, 'start', e.target.value)}
-                            placeholder="Start Time"
-                            className="border rounded-lg px-2 py-1 text-xs w-24"
+                            placeholder="10:00 AM"
+                            className="border rounded-lg px-2 py-1 text-xs w-24 bg-white outline-none focus:ring-1 focus:ring-teal-500"
                           />
                           <span className="text-xs text-slate-500">to</span>
-                          <input 
-                            type="text" 
+                          <input
+                            type="text"
                             value={docForm.schedule[day].end}
                             onChange={e => handleTimeChange(day, 'end', e.target.value)}
-                            placeholder="End Time"
-                            className="border rounded-lg px-2 py-1 text-xs w-24"
+                            placeholder="01:00 PM"
+                            className="border rounded-lg px-2 py-1 text-xs w-24 bg-white outline-none focus:ring-1 focus:ring-teal-500"
                           />
                         </div>
                       )}
@@ -689,8 +1524,12 @@ export default function AdminPanel() {
                 </div>
               </div>
 
-              <button type="submit" className="w-full bg-[#008080] hover:bg-[#006666] text-white py-3 rounded-xl font-bold text-sm transition shadow-md mt-4">
-                {isEditMode ? 'Update Doctor' : 'Save Doctor'}
+              <button
+                type="submit"
+                disabled={isLoading}
+                className="w-full bg-[#008080] hover:bg-[#006666] text-white py-3 rounded-xl font-bold text-sm transition shadow-md mt-4 disabled:bg-slate-400"
+              >
+                {isLoading ? 'Saving...' : isEditMode ? 'Update Doctor in Database' : 'Save New Doctor'}
               </button>
             </form>
           </div>
@@ -702,14 +1541,16 @@ export default function AdminPanel() {
           <div className="bg-white rounded-2xl max-w-md w-full p-6 shadow-2xl relative">
             <h3 className="text-lg font-black text-rose-600 mb-2">⚠️ Delete Doctor</h3>
             <p className="text-xs text-slate-600 mb-4">
-              To delete this doctor, please type the doctor's name: <span className="font-bold text-slate-900">"{deleteModalDoc.name}"</span> and type <span className="font-bold text-rose-600">"delete"</span> below.
+              To delete this doctor, type the name:{' '}
+              <span className="font-bold text-slate-900">"{deleteModalDoc.name}"</span> and type{' '}
+              <span className="font-bold text-rose-600">"delete"</span> below.
             </p>
-            
+
             <form onSubmit={handleDeleteSubmit} className="space-y-3">
               <div>
                 <label className="text-xs font-bold text-slate-700">Type Doctor Name</label>
-                <input 
-                  type="text" 
+                <input
+                  type="text"
                   required
                   value={deleteNameInput}
                   onChange={e => setDeleteNameInput(e.target.value)}
@@ -719,8 +1560,8 @@ export default function AdminPanel() {
               </div>
               <div>
                 <label className="text-xs font-bold text-slate-700">Type "delete"</label>
-                <input 
-                  type="text" 
+                <input
+                  type="text"
                   required
                   value={deleteConfirmWord}
                   onChange={e => setDeleteConfirmWord(e.target.value)}
@@ -730,15 +1571,15 @@ export default function AdminPanel() {
               </div>
 
               <div className="flex gap-2 pt-2">
-                <button 
-                  type="button" 
-                  onClick={() => setDeleteModalDoc(null)} 
+                <button
+                  type="button"
+                  onClick={() => setDeleteModalDoc(null)}
                   className="flex-1 bg-slate-200 hover:bg-slate-300 text-slate-800 py-2.5 rounded-xl font-bold text-sm"
                 >
                   Cancel
                 </button>
-                <button 
-                  type="submit" 
+                <button
+                  type="submit"
                   className="flex-1 bg-rose-600 hover:bg-rose-700 text-white py-2.5 rounded-xl font-bold text-sm"
                 >
                   Confirm Delete

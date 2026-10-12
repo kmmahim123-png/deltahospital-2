@@ -1,6 +1,6 @@
 "use client"
 
-import { useEffect, useState, useRef } from 'react'
+import { useEffect, useState, useRef, useCallback } from 'react'
 import { supabase } from '@/lib/supabase'
 import { sharedDoctors } from '@/lib/doctors'
 
@@ -17,15 +17,136 @@ export default function Home() {
   const [isMounted, setIsMounted] = useState(false)
   const [selectedDept, setSelectedDept] = useState("All")
 
-  useEffect(() => {
-    setIsMounted(true)
-    const timer = setTimeout(() => {
+  // Shob 24 jon doctor-er main list
+  const [doctors, setDoctors] = useState<any[]>(sharedDoctors)
+
+  // Raat 2 tar por absent reset check
+  const shouldResetAbsentStatus = (updatedAtStr?: string) => {
+    if (!updatedAtStr) return false
+    const updatedDate = new Date(updatedAtStr)
+    const now = new Date()
+
+    const bdNow = new Date(now.getTime() + (6 * 60 + now.getTimezoneOffset()) * 60000)
+    const bdUpdated = new Date(updatedDate.getTime() + (6 * 60 + updatedDate.getTimezoneOffset()) * 60000)
+
+    const bdCutoff = new Date(bdNow)
+    bdCutoff.setHours(2, 0, 0, 0)
+
+    if (bdNow >= bdCutoff && bdUpdated < bdCutoff) return true
+    if (bdNow.getTime() - bdUpdated.getTime() > 24 * 60 * 60 * 1000) return true
+    return false
+  }
+
+  // Database theke doctor data fetch kore 24 jon-er sathe live sync kora
+  const syncLiveDoctorsWithDatabase = useCallback(async () => {
+    try {
+      const { data: dbData, error } = await supabase
+        .from('doctors')
+        .select('*')
+
+      if (error) {
+        console.warn('Database connection warning, keeping fallback:', error)
+        setDoctors(sharedDoctors)
+        return
+      }
+
+      if (dbData && dbData.length > 0) {
+        const resetIds: any[] = []
+
+        const formattedDb = dbData.map((d: any) => {
+          let st = d.status || 'Present'
+          if (st === 'Absent' && shouldResetAbsentStatus(d.status_updated_at)) {
+            st = 'Present'
+            resetIds.push(d.id)
+          }
+
+          let sch = d.schedule
+          if (typeof sch === 'string') {
+            try { sch = JSON.parse(sch) } catch (e) { sch = {} }
+          }
+
+          return {
+            ...d,
+            status: st,
+            fee: d.follow_up_fee || d.fee || '500 BDT',
+            days: Array.isArray(d.days) ? d.days : [],
+            sitting_hours: d.sitting_hours || '10:00 AM - 01:00 PM',
+            schedule: sch
+          }
+        })
+
+        // SharedDoctors er sathe database er doctor match kora
+        const fullMerged = sharedDoctors.map((staticDoc: any) => {
+          const matched = formattedDb.find((item: any) => {
+            const sName = staticDoc.name?.trim().toLowerCase().replace(/^(dr\.|prof\.|dr|prof)\s+/i, '')
+            const dName = item.name?.trim().toLowerCase().replace(/^(dr\.|prof\.|dr|prof)\s+/i, '')
+            return (
+              staticDoc.id?.toString() === item.id?.toString() ||
+              staticDoc.doctor_no?.toString() === item.doctor_no?.toString() ||
+              (sName && dName && (sName.includes(dName) || dName.includes(sName)))
+            )
+          })
+
+          if (matched) {
+            return {
+              ...staticDoc,
+              ...matched,
+              fee: matched.fee || matched.follow_up_fee || staticDoc.fee || '500 BDT',
+              status: matched.status || 'Present',
+              days: matched.days && matched.days.length > 0 ? matched.days : staticDoc.days
+            }
+          }
+
+          return {
+            ...staticDoc,
+            fee: staticDoc.fee || staticDoc.follow_up_fee || '500 BDT',
+            status: staticDoc.status || 'Present'
+          }
+        })
+
+        // Jodi extra kono new doctor admin theke add kora hoy
+        formattedDb.forEach((item: any) => {
+          const exists = fullMerged.some((m: any) => m.id?.toString() === item.id?.toString())
+          if (!exists) {
+            fullMerged.push(item)
+          }
+        })
+
+        setDoctors(fullMerged)
+
+        if (resetIds.length > 0) {
+          await supabase
+            .from('doctors')
+            .update({ status: 'Present', status_updated_at: new Date().toISOString() })
+            .in('id', resetIds)
+        }
+      } else {
+        setDoctors(sharedDoctors)
+      }
+    } catch (err) {
+      console.error('Doctor fetch error:', err)
+      setDoctors(sharedDoctors)
+    } finally {
       setIsLoading(false)
-    }, 2500)
-    return () => clearTimeout(timer)
+    }
   }, [])
 
-  const doctors = sharedDoctors
+  useEffect(() => {
+    setIsMounted(true)
+    syncLiveDoctorsWithDatabase()
+
+    // Realtime listener jaate admin edit korle ekhane bina reloade instant update hoy
+    const channel = supabase
+      .channel('realtime_doctors_channel')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'doctors' }, () => {
+        syncLiveDoctorsWithDatabase()
+      })
+      .subscribe()
+
+    return () => {
+      supabase.removeChannel(channel)
+    }
+  }, [syncLiveDoctorsWithDatabase])
 
   const getDeptEmoji = (dept: string) => {
     switch (dept) {
@@ -53,17 +174,21 @@ export default function Home() {
     return `${getDeptEmoji(spec)} ${spec}`;
   }
 
-  const getDoctorBadge = (days: string[]) => {
+  const getDoctorBadge = (days: string[], status: string) => {
+    if (status === 'Absent') {
+      return <span className="absolute top-3 left-3 bg-rose-600 text-white text-[10px] font-bold px-2.5 py-1 rounded-md shadow z-10">Absent</span>
+    }
+
     const todayObj = new Date()
     const tomorrowObj = new Date()
     tomorrowObj.setDate(todayObj.getDate() + 1)
     const todayName = todayObj.toLocaleDateString('en-US', { weekday: 'long' })
     const tomorrowName = tomorrowObj.toLocaleDateString('en-US', { weekday: 'long' })
 
-    if (days.includes(todayName)) {
-      return <span className="absolute top-3 left-3 bg-emerald-600 text-white text-[10px] font-bold px-2.5 py-1 rounded-md shadow">Today</span>
-    } else if (days.includes(tomorrowName)) {
-      return <span className="absolute top-3 left-3 bg-purple-600 text-white text-[10px] font-bold px-2.5 py-1 rounded-md shadow">Tomorrow</span>
+    if (days && days.includes(todayName)) {
+      return <span className="absolute top-3 left-3 bg-emerald-600 text-white text-[10px] font-bold px-2.5 py-1 rounded-md shadow z-10">Today</span>
+    } else if (days && days.includes(tomorrowName)) {
+      return <span className="absolute top-3 left-3 bg-purple-600 text-white text-[10px] font-bold px-2.5 py-1 rounded-md shadow z-10">Tomorrow</span>
     }
     return null
   }
@@ -76,7 +201,7 @@ export default function Home() {
 
   const filteredDoctorsByDept = selectedDept === "All" 
     ? doctors 
-    : doctors.filter(d => d.specialization.trim().toLowerCase() === selectedDept.trim().toLowerCase())
+    : doctors.filter(d => (d.specialization || '').trim().toLowerCase() === selectedDept.trim().toLowerCase())
 
   const [currentSlide, setCurrentSlide] = useState(0)
   const heroSlides = [
@@ -105,7 +230,7 @@ export default function Home() {
       const d = new Date(today)
       d.setDate(today.getDate() + i)
       const weekday = d.toLocaleDateString('en-US', { weekday: 'long' })
-      if (doctorDays.includes(weekday)) {
+      if (doctorDays && doctorDays.includes(weekday)) {
         list.push({
           dateStr: d.toISOString().split('T')[0],
           display: d.toLocaleDateString('en-US', { weekday: 'short', day: 'numeric', month: 'short', year: '2-digit' }),
@@ -129,16 +254,17 @@ export default function Home() {
 
   const handleDoctorChange = (docId: string) => {
     setFormData(prev => ({ ...prev, doctor_id: docId }))
-    const doc = doctors.find(d => d.id.toString() === docId)
+    const doc = doctors.find(d => d.id?.toString() === docId)
     if (doc) {
       setSelectedDoctor(doc)
       const validDates = getTop3AvailableDates(doc.days)
       setAvailableDatesForDoc(validDates)
-      if (validDates.length > 0) {
+      const absentStatus = doc.status === 'Absent' || validDates.length === 0
+      setIsDoctorAbsent(absentStatus)
+      if (validDates.length > 0 && doc.status !== 'Absent') {
         setFormData(prev => ({ ...prev, booking_date: validDates[0].dateStr }))
-        setIsDoctorAbsent(false)
       } else {
-        setIsDoctorAbsent(true)
+        setFormData(prev => ({ ...prev, booking_date: '' }))
       }
     } else {
       setSelectedDoctor(null)
@@ -150,11 +276,19 @@ export default function Home() {
   const handleCardClick = (doc: any) => {
     const validDates = getTop3AvailableDates(doc.days)
     setAvailableDatesForDoc(validDates)
+    const absentStatus = doc.status === 'Absent' || validDates.length === 0
+    setIsDoctorAbsent(absentStatus)
     setFormData({
-      name: '', phone: '', specialization: doc.specialization || '', doctor_id: doc.id.toString(), booking_date: validDates[0]?.dateStr || '', age: '', patient_type: 'New', note: ''
+      name: '', 
+      phone: '', 
+      specialization: doc.specialization || '', 
+      doctor_id: doc.id?.toString(), 
+      booking_date: (!absentStatus && validDates.length > 0) ? validDates[0].dateStr : '', 
+      age: '', 
+      patient_type: 'New', 
+      note: ''
     })
     setSelectedDoctor(doc)
-    setIsDoctorAbsent(validDates.length === 0)
     setSubmitted(false)
     setBookedData(null)
     setIsModalOpen(true)
@@ -163,21 +297,30 @@ export default function Home() {
   async function handleBookingSubmit(e: React.FormEvent) {
     e.preventDefault()
     if (formData.phone.length !== 11) { alert('Phone number must be exactly 11 digits.'); return; }
-    if (isDoctorAbsent || availableDatesForDoc.length === 0) { alert('Selected doctor is not available.'); return; }
-
-    const serialNumStr = "#" + String(Math.floor(10 + Math.random() * 90))
-    const serialNumInt = parseInt(serialNumStr.replace('#', ''))
+    if (isDoctorAbsent || selectedDoctor?.status === 'Absent' || availableDatesForDoc.length === 0) { 
+      alert('Selected doctor is currently Absent or unavailable for appointment.'); 
+      return; 
+    }
 
     try {
+      const { count } = await supabase
+        .from('bookings')
+        .select('*', { count: 'exact', head: true })
+        .eq('doctor_id', selectedDoctor.id.toString())
+        .eq('booking_date', formData.booking_date)
+
+      const nextSerial = (count || 0) + 1
+      const serialNumStr = `#${nextSerial}`
+
       const { error } = await supabase.from('bookings').insert({
         patient_name: formData.name,
         phone: formData.phone,
         doctor_id: selectedDoctor.id.toString(),
         booking_date: formData.booking_date,
         age: formData.age ? parseInt(formData.age) : null,
-        patient_type: formData.patient_type || 'New',
+        patient_type: 'Online',
         symptoms: formData.note || '',
-        serial_number: serialNumInt,
+        serial_number: nextSerial,
         status: 'Confirmed'
       })
 
@@ -193,7 +336,7 @@ export default function Home() {
           },
           body: JSON.stringify({
             to: `88${formData.phone}`,
-            message: `Delta Health Care Jatrabari Ltd.\nDear ${formData.name}, your appointment with ${selectedDoctor.name} on ${formData.booking_date} (${selectedDoctor.sitting_hours}) is confirmed. Serial: ${serialNumStr}. Fee: 500 Tk.\nLocation Map: https://share.google/Gr8O0DTGxw96MwyZp`,
+            message: `Delta Health Care Jatrabari Ltd.\nDear ${formData.name}, your appointment with ${selectedDoctor.name} on ${formData.booking_date} (${selectedDoctor.sitting_hours}) is confirmed. Serial: ${serialNumStr}. Fee: ${selectedDoctor.fee || selectedDoctor.follow_up_fee || '500 BDT'}.\nLocation Map: https://share.google/Gr8O0DTGxw96MwyZp`,
             sender_id: '8809666720320',
             type: 'transactional'
           })
@@ -206,7 +349,7 @@ export default function Home() {
         ...formData,
         doctorName: selectedDoctor.name,
         doctorDegree: selectedDoctor.degree,
-        fee: selectedDoctor.fee || "500 Tk",
+        fee: selectedDoctor.fee || selectedDoctor.follow_up_fee || "500 BDT",
         serialNo: serialNumStr,
         bookingTime: new Date().toLocaleString()
       }
@@ -231,7 +374,7 @@ export default function Home() {
         doctor_id: `Emergency-${quickReserveType}`,
         booking_date: new Date().toISOString().split('T')[0],
         age: quickForm.age ? parseInt(quickForm.age) : null,
-        patient_type: 'Emergency',
+        patient_type: 'Online',
         symptoms: `Quick Reservation: ${quickReserveType}`,
         serial_number: serialNumInt,
         status: 'Confirmed'
@@ -355,7 +498,7 @@ export default function Home() {
         }
       `}</style>
       <div>
-        {/* Normal Header 1st line */}
+        {/* Header 1st line */}
         <header className="bg-[#008080] text-white py-3.5 px-6 sm:px-12 flex flex-col md:flex-row justify-between items-center gap-4 shadow-sm">
           <div className="flex items-center gap-3">
             <div className="w-12 h-12 flex items-center justify-center bg-white rounded-xl p-1 shadow-md">
@@ -381,8 +524,8 @@ export default function Home() {
           </div>
         </header>
 
-        {/* Sticky 2nd Line (Home Service & Quick Reserve) */}
-        <div className="sticky top-0 z-50 bg-slate-100 border-b border-slate-200 py-2.5 px-6 sm:px-12 flex items-center justify-between shadow-md">
+        {/* Sticky 2nd Line */}
+        <div className="sticky top-0 z-40 bg-slate-100 border-b border-slate-200 py-2.5 px-6 sm:px-12 flex items-center justify-between shadow-md">
           <div className="flex items-center gap-4 text-xs font-bold text-slate-700">
             <a href="#home-service" className="hover:text-[#008080] transition whitespace-nowrap text-xs font-bold bg-transparent border-2 border-slate-400 text-slate-700 hover:border-[#008080] px-5 py-1 rounded-full uppercase tracking-wide">Home Service</a>
             <button 
@@ -391,9 +534,6 @@ export default function Home() {
             >
               <span>⚡</span> Quick Reserve
             </button>
-          </div>
-          <div className="flex items-center gap-3">
-            {/* Right side clean */}
           </div>
         </div>
 
@@ -465,10 +605,12 @@ export default function Home() {
           </div>
         </section>
 
-        {/* Our Doctors Horizontal Scroll Section */}
+        {/* Our Doctors Section (24 Doctors List) */}
         <section id="doctors" className="max-w-7xl mx-auto px-4 py-6">
           <div className="flex justify-between items-center mb-6">
-            <h2 className="text-2xl sm:text-3xl font-black text-slate-900">Our Doctors ({filteredDoctorsByDept.length})</h2>
+            <h2 className="text-2xl sm:text-3xl font-black text-slate-900">
+              Our Doctors ({filteredDoctorsByDept.length})
+            </h2>
             <div className="flex gap-2">
               <button onClick={scrollLeft} className="w-10 h-10 rounded-lg border border-slate-300 flex items-center justify-center hover:bg-slate-100 text-slate-900 font-bold transition text-lg shadow-xs">
                 ‹
@@ -490,25 +632,36 @@ export default function Home() {
                 onClick={() => handleCardClick(doc)}
                 className="min-w-[260px] sm:min-w-[280px] bg-white border border-slate-200 rounded-2xl p-4 text-center shadow-sm hover:shadow-lg transition snap-start flex-shrink-0 cursor-pointer group flex flex-col justify-between relative overflow-hidden"
               >
-                {getDoctorBadge(doc.days)}
+                {getDoctorBadge(doc.days, doc.status)}
 
-                <div className="w-full h-56 mx-auto rounded-xl bg-slate-50 mb-3 overflow-hidden border border-slate-100 flex items-center justify-center">
+                <div className="w-full h-56 mx-auto rounded-xl bg-slate-50 mb-3 overflow-hidden border border-slate-100 flex items-center justify-center relative">
                   <img 
-                    src={doc.image_url} 
+                    src={doc.image_url || "/doctors/doctor-1.png"} 
                     alt={doc.name} 
                     onError={(e: any) => { e.target.src = "/doctors/doctor-1.png"; }}
-                    className="w-full h-full object-cover object-top group-hover:scale-105 transition duration-300"
+                    className={`w-full h-full object-cover object-top group-hover:scale-105 transition duration-300 ${doc.status === 'Absent' ? 'grayscale opacity-75' : ''}`}
                   />
+                  {doc.status === 'Absent' && (
+                    <div className="absolute inset-0 bg-rose-900/20 backdrop-blur-[1px] flex items-center justify-center">
+                      <span className="bg-rose-600 text-white font-extrabold text-xs px-3 py-1 rounded-full shadow-lg">Absent Today</span>
+                    </div>
+                  )}
                 </div>
 
                 <div className="bg-[#e6f4f4] border border-[#008080]/30 rounded-xl p-3 text-left">
                   <h3 className="font-bold text-slate-900 text-sm line-clamp-1">{doc.name}</h3>
                   <p className="text-[11px] text-slate-600 mt-0.5 font-semibold line-clamp-1">{doc.degree}</p>
-                  <p className="text-xs text-[#008080] font-extrabold mt-1">
-                    {getSpecializationWithIconText(doc.specialization)}
-                  </p>
-                  <button className="w-full mt-3 bg-[#008080] hover:bg-[#006666] text-white py-1.5 rounded-lg text-xs font-bold transition">
-                    Make Appointment
+                  <div className="flex justify-between items-center mt-1">
+                    <p className="text-xs text-[#008080] font-extrabold">
+                      {getSpecializationWithIconText(doc.specialization)}
+                    </p>
+                    <span className="text-[11px] font-bold text-slate-700 bg-white px-2 py-0.5 rounded border border-teal-200">
+                      {doc.fee || doc.follow_up_fee || '500 BDT'}
+                    </span>
+                  </div>
+
+                  <button className={`w-full mt-3 py-1.5 rounded-lg text-xs font-bold transition shadow-xs ${doc.status === 'Absent' ? 'bg-slate-400 text-white cursor-not-allowed' : 'bg-[#008080] hover:bg-[#006666] text-white'}`}>
+                    {doc.status === 'Absent' ? 'Doctor Absent' : 'Make Appointment'}
                   </button>
                 </div>
               </div>
@@ -735,6 +888,7 @@ export default function Home() {
                           setFormData({...formData, specialization: e.target.value, doctor_id: '', booking_date: ''});
                           setSelectedDoctor(null);
                           setAvailableDatesForDoc([]);
+                          setIsDoctorAbsent(false);
                         }}
                         className="w-full border rounded-xl px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-teal-500 bg-white mt-1"
                       >
@@ -755,7 +909,7 @@ export default function Home() {
                         <option value="">Select Doctor</option>
                         {filteredDoctors.map(doc => (
                           <option key={doc.id} value={doc.id}>
-                            {doc.name} ({doc.specialization})
+                            {doc.name} {doc.status === 'Absent' ? '(🔴 Absent)' : ''}
                           </option>
                         ))}
                       </select>
@@ -763,40 +917,54 @@ export default function Home() {
                   </div>
 
                   {selectedDoctor && (
-                    <div className="bg-teal-50 border border-teal-200 rounded-xl p-3 text-xs text-slate-800 flex flex-col gap-1.5">
+                    <div className={`border rounded-xl p-3 text-xs flex flex-col gap-1.5 transition ${selectedDoctor.status === 'Absent' ? 'bg-rose-50 border-rose-200' : 'bg-teal-50 border-teal-200 text-slate-800'}`}>
                       <div className="flex items-center gap-3">
-                        <div className="w-14 h-14 rounded-lg overflow-hidden bg-slate-200 flex-shrink-0 border border-teal-200">
+                        <div className="w-14 h-14 rounded-lg overflow-hidden bg-slate-200 flex-shrink-0 border border-teal-200 relative">
                           <img 
-                            src={selectedDoctor.image_url} 
+                            src={selectedDoctor.image_url || "/doctors/doctor-1.png"} 
                             alt={selectedDoctor.name} 
                             onError={(e: any) => { e.target.src = "/doctors/doctor-1.png"; }}
                             className="w-full h-full object-cover object-top"
                           />
                         </div>
-                        <div>
-                          <p className="font-bold text-slate-900 text-sm">{selectedDoctor.name}</p>
+                        <div className="flex-1">
+                          <div className="flex justify-between items-start">
+                            <p className="font-bold text-slate-900 text-sm">{selectedDoctor.name}</p>
+                            <span className={`px-2 py-0.5 rounded text-[10px] font-extrabold ${selectedDoctor.status === 'Absent' ? 'bg-rose-600 text-white' : 'bg-emerald-600 text-white'}`}>
+                              {selectedDoctor.status || 'Present'}
+                            </span>
+                          </div>
                           <p className="text-slate-700 font-semibold">{selectedDoctor.degree}</p>
-                          <p className="text-slate-600 text-[11px] mt-0.5">{selectedDoctor.details}</p>
+                          <p className="text-slate-600 text-[11px] mt-0.5">{selectedDoctor.details || selectedDoctor.branch}</p>
                         </div>
                       </div>
-                      <div className="flex flex-col gap-0.5 mt-1 pt-2 border-t border-teal-200 text-[11px] font-bold text-[#008080]">
-                        <span>Days: {selectedDoctor.days.join(', ')}</span>
+
+                      <div className="flex flex-col gap-0.5 mt-1 pt-2 border-t border-slate-200 text-[11px] font-bold text-[#008080]">
+                        <span>Days: {selectedDoctor.days?.join(', ') || 'Available on scheduled dates'}</span>
                         <span>Sitting Hours: {selectedDoctor.sitting_hours}</span>
                       </div>
+
                       <div className="text-right">
-                        <span className="bg-[#008080] text-white px-2 py-0.5 rounded text-[10px] font-extrabold">Fee: {selectedDoctor.fee}</span>
-                      </div>
-                      {isDoctorAbsent && (
-                        <span className="bg-rose-100 text-rose-700 font-bold px-2 py-0.5 rounded-md text-[10px]">
-                          ⚠️ No dates found
+                        <span className="bg-[#008080] text-white px-2 py-0.5 rounded text-[10px] font-extrabold">
+                          Fee: {selectedDoctor.fee || selectedDoctor.follow_up_fee || '500 BDT'}
                         </span>
+                      </div>
+
+                      {selectedDoctor.status === 'Absent' && (
+                        <div className="bg-rose-100 text-rose-700 font-bold px-3 py-1.5 rounded-lg text-xs mt-1 border border-rose-300">
+                          ⚠️ Doctor is currently ABSENT. Appointments cannot be placed today.
+                        </div>
                       )}
                     </div>
                   )}
 
                   <div>
                     <label className="text-xs font-bold text-slate-700 block mb-1">Select Date (Next 3 Available Days) <span className="text-rose-500">*</span></label>
-                    {availableDatesForDoc.length === 0 ? (
+                    {selectedDoctor?.status === 'Absent' ? (
+                      <p className="text-xs text-rose-600 font-bold bg-rose-50 p-2.5 rounded-xl border border-rose-200">
+                        ⚠️ Booking is closed because doctor is marked as ABSENT.
+                      </p>
+                    ) : availableDatesForDoc.length === 0 ? (
                       <p className="text-xs text-rose-600 font-bold bg-rose-50 p-2.5 rounded-xl border border-rose-200">
                         {selectedDoctor ? "⚠️ No available dates found for this doctor." : "Please select a doctor first to view available dates."}
                       </p>
@@ -848,7 +1016,7 @@ export default function Home() {
                       <label className="text-xs font-bold text-slate-700">Age</label>
                       <input 
                         type="number" 
-                        value={formData.age}
+                        value={formData.age} 
                         onChange={e => setFormData({...formData, age: e.target.value})}
                         placeholder="Age" 
                         className="w-full border rounded-xl px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-teal-500 mt-1" 
@@ -858,7 +1026,7 @@ export default function Home() {
                       <label className="text-xs font-bold text-slate-700">Note</label>
                       <input 
                         type="text" 
-                        value={formData.note}
+                        value={formData.note} 
                         onChange={e => setFormData({...formData, note: e.target.value})}
                         placeholder="Add a note..." 
                         className="w-full border rounded-xl px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-teal-500 mt-1" 
@@ -868,10 +1036,10 @@ export default function Home() {
 
                   <button 
                     type="submit" 
-                    disabled={isDoctorAbsent || availableDatesForDoc.length === 0}
-                    className={`w-full py-2.5 rounded-xl font-bold text-sm transition mt-2 ${isDoctorAbsent || availableDatesForDoc.length === 0 ? 'bg-slate-300 text-slate-500 cursor-not-allowed' : 'bg-[#008080] hover:bg-[#006666] text-white'}`}
+                    disabled={isDoctorAbsent || selectedDoctor?.status === 'Absent' || availableDatesForDoc.length === 0}
+                    className={`w-full py-2.5 rounded-xl font-bold text-sm transition mt-2 ${isDoctorAbsent || selectedDoctor?.status === 'Absent' || availableDatesForDoc.length === 0 ? 'bg-slate-300 text-slate-500 cursor-not-allowed' : 'bg-[#008080] hover:bg-[#006666] text-white'}`}
                   >
-                    {isDoctorAbsent || availableDatesForDoc.length === 0 ? 'Doctor Unavailable' : 'Submit Appointment'}
+                    {selectedDoctor?.status === 'Absent' ? 'Doctor Absent (Appointment Closed)' : isDoctorAbsent || availableDatesForDoc.length === 0 ? 'Doctor Unavailable' : 'Submit Appointment'}
                   </button>
                 </form>
               </div>
