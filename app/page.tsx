@@ -9,14 +9,14 @@ export default function Home() {
   const [isModalOpen, setIsModalOpen] = useState(false)
   const [isQuickReserveOpen, setIsQuickReserveOpen] = useState(false)
   const [isReportModalOpen, setIsReportModalOpen] = useState(false)
+  const [isPackageModalOpen, setIsPackageModalOpen] = useState(false)
   
   const [quickReserveType, setQuickReserveType] = useState('NICU')
   const [quickForm, setQuickForm] = useState({ name: '', age: '', contact: '' })
   const [quickSubmitted, setQuickSubmitted] = useState(false)
 
-  // Report Search State
-  const [reportPhone, setReportPhone] = useState('')
-  const [patientReports, setPatientReports] = useState<any[]>([])
+  const [reportInvoice, setReportInvoice] = useState('')
+  const [reportResult, setReportResult] = useState<any>(null)
   const [searchingReport, setSearchingReport] = useState(false)
   const [reportSearched, setReportSearched] = useState(false)
 
@@ -72,7 +72,6 @@ export default function Home() {
         }
       })
 
-      // Strict Map to prevent duplicate doctors in main view
       const mergedMap = new Map<string, any>()
 
       sharedDoctors.forEach((sDoc: any, idx: number) => {
@@ -394,24 +393,29 @@ export default function Home() {
 
   const handleSearchReports = async (e: React.FormEvent) => {
     e.preventDefault()
-    if (reportPhone.length !== 11) {
-      alert('Please enter a valid 11-digit mobile number')
+    if (!reportInvoice.trim()) {
+      alert('Please enter a valid Invoice or Serial number')
       return
     }
     setSearchingReport(true)
     setReportSearched(true)
     try {
+      const cleanInv = reportInvoice.trim().replace('#', '')
       const { data, error } = await supabase
-        .from('patient_reports')
+        .from('bookings')
         .select('*')
-        .eq('patient_phone', reportPhone)
-        .order('created_at', { ascending: false })
+        .or(`serial_number.eq.${cleanInv},phone.eq.${reportInvoice.trim()}`)
+        .limit(1)
 
       if (error) throw error
-      setPatientReports(data || [])
+      if (data && data.length > 0) {
+        setReportResult(data[0])
+      } else {
+        setReportResult(null)
+      }
     } catch (err: any) {
-      console.error('Error fetching reports:', err)
-      setPatientReports([])
+      console.error('Error fetching report:', err)
+      setReportResult(null)
     } finally {
       setSearchingReport(false)
     }
@@ -443,7 +447,7 @@ export default function Home() {
         <body>
           <div class="slip-box">
             <div class="header">
-              <h2>Delta Health Care Jatrabari Ltd.</h2>
+              <h2>ডেল্টা হেলথ্ কেয়ার যাত্রাবাড়ী লিমিটেড</h2>
               <p>Official Appointment Confirmation Slip</p>
             </div>
             <div class="serial-box">
@@ -486,7 +490,7 @@ export default function Home() {
             <img src="/logo.png" alt="Logo" className="w-full h-full object-contain animate-3d-spin" />
           </div>
           <h2 className="text-sm font-extrabold text-[#008080] tracking-wide mt-2">
-            ডেল্টা হেল্থ কেয়ার যাত্রাবাড়ী লিমিটেড
+            ডেল্টা হেলথ্ কেয়ার যাত্রাবাড়ী লিমিটেড
           </h2>
         </div>
       </div>
@@ -494,7 +498,7 @@ export default function Home() {
   }
 
   return (
-    <div className="min-h-screen bg-white text-slate-900 font-sans selection:bg-teal-100 flex flex-col justify-between">
+    <div className="min-h-screen bg-white text-slate-900 font-sans selection:bg-teal-100 flex flex-col justify-between w-full overflow-x-hidden">
       <style jsx>{`
         @keyframes spin3d {
           0% { transform: rotateY(0deg); }
@@ -506,76 +510,81 @@ export default function Home() {
         }
       `}</style>
       
-      <div>
-        {/* Top Header - Samorita Style Branding */}
-        <header className="bg-white text-slate-800 py-3 px-4 sm:px-12 flex flex-col md:flex-row justify-between items-center gap-3 border-b border-slate-200 shadow-xs">
-          <div className="flex items-center gap-3">
-            <div className="w-12 h-12 flex items-center justify-center bg-teal-50 rounded-xl p-1 shadow-xs border border-teal-100">
+      <div className="w-full">
+        {/* Top Header - Perfect Mobile Responsive & Balanced Alignment */}
+        <header className="bg-white text-slate-800 py-3 px-3 sm:px-12 flex flex-row justify-between items-center gap-2 border-b border-slate-200 shadow-xs w-full">
+          <div className="flex items-center gap-2 sm:gap-3">
+            <div className="w-10 h-10 sm:w-12 sm:h-12 flex items-center justify-center bg-teal-50 rounded-xl p-1 shadow-xs border border-teal-100 flex-shrink-0">
               <img src="/logo.png" alt="Logo" className="w-full h-full object-contain animate-3d-spin" />
             </div>
             
-            {/* Samorita Style Logo Typography */}
-            <div className="flex flex-col">
-              <h2 className="text-sm sm:text-base font-black text-[#007b7b] leading-tight tracking-normal">
-                ডেল্টা হেল্থ কেয়ার যাত্রাবাড়ী লিমিটেড
+            <div className="flex flex-col justify-center">
+              <h2 className="text-[11px] sm:text-sm font-black text-[#007b7b] leading-tight tracking-normal whitespace-nowrap">
+                ডেল্টা হেলথ্ কেয়ার যাত্রাবাড়ী লিমিটেড
               </h2>
               <div className="w-full border-b-[1.5px] border-[#007b7b] my-0.5"></div>
-              <h1 className="text-xs sm:text-sm font-bold text-rose-600 tracking-wide leading-tight">
+              <h1 className="text-[10px] sm:text-xs font-bold text-rose-600 tracking-wider leading-tight whitespace-nowrap">
                 Delta Health Care Jatrabari Limited
               </h1>
             </div>
           </div>
 
-          <div className="flex flex-row md:flex-col items-center justify-between w-full md:w-auto gap-4 md:gap-0.5">
-            <div className="text-left md:text-center">
-              <span className="text-[11px] text-slate-500 font-semibold block">Emergency & Serial Hotline</span>
-              <a href="tel:09666720320" className="flex items-center gap-1.5 text-base sm:text-lg font-black tracking-wider text-[#008080] hover:underline font-mono">
-                <span>📞</span> <span>09666720320</span>
+          <div className="flex items-center gap-2 sm:gap-4 flex-shrink-0">
+            <div className="hidden sm:flex flex-col text-right">
+              <span className="text-[10px] text-slate-500 font-semibold">Emergency & Serial Hotline</span>
+              <a href="tel:09666720320" className="text-sm font-black tracking-wider text-[#008080] hover:underline font-mono">
+                09666720320
               </a>
             </div>
 
-            <a href="/admin" className="bg-teal-50 hover:bg-teal-100 text-[#008080] border border-teal-200 px-4 py-1.5 rounded-lg font-bold text-xs transition shadow-xs">
+            <a href="/admin" className="bg-teal-50 hover:bg-teal-100 text-[#008080] border border-teal-200 px-3 py-1.5 rounded-lg font-bold text-xs transition shadow-xs whitespace-nowrap">
               Staff Portal
             </a>
           </div>
         </header>
 
-        {/* Sticky 2nd Navigation Bar */}
-        <div className="sticky top-0 z-40 bg-slate-50 border-b border-slate-200 py-2 px-4 sm:px-12 flex items-center justify-between shadow-xs backdrop-blur-md bg-opacity-95">
-          <div className="flex items-center gap-2 sm:gap-3 text-xs font-bold w-full sm:w-auto justify-between sm:justify-start">
-            <a href="#home-service" className="hover:text-[#008080] transition whitespace-nowrap text-[11px] sm:text-xs font-bold border border-slate-300 px-3.5 py-1 rounded-full uppercase tracking-wide bg-white">
+        {/* Sticky 2nd Navigation Bar - Fully Uniform Quick Reserve Style */}
+        <div className="sticky top-0 z-40 bg-slate-50 border-b border-slate-200 py-2.5 px-3 sm:px-12 flex items-center justify-between shadow-xs backdrop-blur-md bg-opacity-95 w-full">
+          <div className="flex items-center gap-2 sm:gap-3 text-xs font-bold w-full overflow-x-auto scrollbar-hide py-0.5">
+            <a href="#home-service" className="border border-rose-500 text-rose-600 hover:bg-rose-600 hover:text-white px-3 sm:px-4 py-1.5 rounded-full text-[10px] sm:text-xs font-black transition uppercase flex items-center gap-1 shadow-xs cursor-pointer bg-rose-50/50 whitespace-nowrap flex-shrink-0">
               Home Service
             </a>
             
             <button 
               onClick={() => { setQuickSubmitted(false); setQuickForm({ name: '', age: '', contact: '' }); setIsQuickReserveOpen(true); }}
-              className="border border-rose-500 text-rose-600 hover:bg-rose-600 hover:text-white px-3.5 py-1 rounded-full text-[11px] sm:text-xs font-extrabold transition uppercase flex items-center gap-1 shadow-xs cursor-pointer bg-rose-50/50"
+              className="border border-rose-500 text-rose-600 hover:bg-rose-600 hover:text-white px-3 sm:px-4 py-1.5 rounded-full text-[10px] sm:text-xs font-black transition uppercase flex items-center gap-1 shadow-xs cursor-pointer bg-rose-50/50 whitespace-nowrap flex-shrink-0"
             >
               <span>⚡</span> Quick Reserve
             </button>
 
-            {/* Pulse Hospital style Download Report Button */}
             <button 
-              onClick={() => { setIsReportModalOpen(true); setReportSearched(false); setPatientReports([]); setReportPhone(''); }}
-              className="border border-teal-600 bg-[#008080] text-white hover:bg-teal-700 px-3.5 py-1 rounded-full text-[11px] sm:text-xs font-extrabold transition uppercase flex items-center gap-1 shadow-xs cursor-pointer"
+              onClick={() => { setIsReportModalOpen(true); setReportSearched(false); setReportResult(null); setReportInvoice(''); }}
+              className="border border-rose-500 text-rose-600 hover:bg-rose-600 hover:text-white px-3 sm:px-4 py-1.5 rounded-full text-[10px] sm:text-xs font-black transition uppercase flex items-center gap-1 shadow-xs cursor-pointer bg-rose-50/50 whitespace-nowrap flex-shrink-0"
             >
               <span>📄</span> Download Report
+            </button>
+
+            <button 
+              onClick={() => setIsPackageModalOpen(true)}
+              className="border border-rose-500 text-rose-600 hover:bg-rose-600 hover:text-white px-3 sm:px-4 py-1.5 rounded-full text-[10px] sm:text-xs font-black transition uppercase flex items-center gap-1 shadow-xs cursor-pointer bg-rose-50/50 whitespace-nowrap flex-shrink-0"
+            >
+              <span>📦</span> Package
             </button>
           </div>
         </div>
 
         {/* Hero Section */}
-        <section className="max-w-7xl mx-auto px-4 py-4 sm:py-8">
-          <div className={`bg-gradient-to-r ${heroSlides[currentSlide].bgGradient} rounded-3xl p-6 sm:p-12 flex flex-col md:flex-row items-center justify-between shadow-xs border ${heroSlides[currentSlide].border} relative overflow-hidden min-h-[380px] transition-all duration-500`}>
-            <div className="max-w-2xl mb-6 md:mb-0 z-10 text-center md:text-left">
-              <h1 className="text-2xl sm:text-4xl md:text-5xl font-black text-slate-900 leading-tight">
+        <section className="w-full px-3 sm:px-12 py-4 sm:py-8">
+          <div className={`w-full bg-gradient-to-r ${heroSlides[currentSlide].bgGradient} rounded-3xl p-5 sm:p-12 flex flex-col md:flex-row items-center justify-between shadow-xs border ${heroSlides[currentSlide].border} relative overflow-hidden transition-all duration-500`}>
+            <div className="max-w-2xl mb-6 md:mb-0 z-10 text-center md:text-left w-full">
+              <h1 className="text-xl sm:text-4xl md:text-5xl font-black text-slate-900 leading-tight">
                 Book Doctor Appointments <span className="text-[#008080]">Hassle-Free</span>
               </h1>
-              <p className="text-slate-700 mt-3 text-sm sm:text-base font-medium leading-relaxed">
+              <p className="text-slate-700 mt-2 sm:mt-3 text-xs sm:text-base font-medium leading-relaxed">
                 {heroSlides[currentSlide].desc}
               </p>
               
-              <div className="flex justify-center md:justify-start gap-4 mt-6">
+              <div className="flex justify-center md:justify-start gap-4 mt-5">
                 <button 
                   onClick={() => { 
                     setAvailableDatesForDoc([]);
@@ -585,7 +594,7 @@ export default function Home() {
                     setBookedData(null);
                     setIsModalOpen(true); 
                   }}
-                  className="bg-[#008080] hover:bg-[#006666] text-white px-6 sm:px-8 py-3 rounded-xl font-bold text-sm sm:text-base transition shadow-md active:scale-95"
+                  className="bg-[#008080] hover:bg-[#006666] text-white px-6 sm:px-8 py-3 rounded-xl font-bold text-xs sm:text-base transition shadow-md active:scale-95"
                 >
                   Book Appointment Now
                 </button>
@@ -593,7 +602,7 @@ export default function Home() {
             </div>
 
             <div className="w-full md:w-auto flex justify-center z-10">
-              <div className="bg-white p-2 rounded-2xl shadow-md border border-slate-100 w-[240px] sm:w-[280px] h-[190px] sm:h-[220px] flex items-center justify-center overflow-hidden">
+              <div className="bg-white p-2 rounded-2xl shadow-md border border-slate-100 w-[220px] sm:w-[280px] h-[170px] sm:h-[220px] flex items-center justify-center overflow-hidden">
                 <img 
                   src={heroSlides[currentSlide].image} 
                   alt="Hospital Banner" 
@@ -603,12 +612,12 @@ export default function Home() {
               </div>
             </div>
 
-            <div className="absolute bottom-4 right-6 sm:right-10 flex gap-1.5 z-20">
+            <div className="absolute bottom-3 right-4 sm:right-10 flex gap-1.5 z-20">
               {heroSlides.map((_, index) => (
                 <button
                   key={index}
                   onClick={() => setCurrentSlide(index)}
-                  className={`h-2.5 rounded-full transition-all duration-300 ${currentSlide === index ? 'bg-[#008080] w-6' : 'bg-slate-300 w-2.5'}`}
+                  className={`h-2 rounded-full transition-all duration-300 ${currentSlide === index ? 'bg-[#008080] w-5' : 'bg-slate-300 w-2'}`}
                   aria-label={`Slide ${index + 1}`}
                 />
               ))}
@@ -617,13 +626,13 @@ export default function Home() {
         </section>
 
         {/* Department Filter Chips Bar */}
-        <section className="max-w-7xl mx-auto px-4 py-2 sm:py-4">
-          <div className="flex items-center gap-2.5 overflow-x-auto scrollbar-hide py-2 px-1" style={{ scrollbarWidth: 'none', msOverflowStyle: 'none' }}>
+        <section className="w-full px-3 sm:px-12 py-2 sm:py-4">
+          <div className="flex items-center gap-2 overflow-x-auto scrollbar-hide py-2 px-1 w-full" style={{ scrollbarWidth: 'none', msOverflowStyle: 'none' }}>
             {departments.map((dept, idx) => (
               <button
                 key={`dept-${idx}`}
                 onClick={() => setSelectedDept(dept)}
-                className={`flex items-center gap-1.5 px-4 py-2 rounded-full text-xs font-bold whitespace-nowrap transition-all shadow-xs flex-shrink-0 ${selectedDept === dept ? 'bg-[#008080] text-white' : 'bg-slate-100 text-slate-700 hover:bg-slate-200'}`}
+                className={`flex items-center gap-1.5 px-3.5 py-2 rounded-full text-xs font-bold whitespace-nowrap transition-all shadow-xs flex-shrink-0 ${selectedDept === dept ? 'bg-[#008080] text-white' : 'bg-slate-100 text-slate-700 hover:bg-slate-200'}`}
               >
                 <span>{getDeptEmoji(dept)}</span>
                 <span>{dept}</span>
@@ -633,19 +642,19 @@ export default function Home() {
         </section>
 
         {/* Our Doctors Section */}
-        <section id="doctors" className="max-w-7xl mx-auto px-4 py-4 sm:py-6">
-          <div className="flex justify-between items-center mb-4 sm:mb-6">
+        <section id="doctors" className="w-full px-3 sm:px-12 py-4 sm:py-6">
+          <div className="flex justify-between items-center mb-4">
             <div>
-              <h2 className="text-xl sm:text-3xl font-black text-slate-900">
+              <h2 className="text-lg sm:text-3xl font-black text-slate-900">
                 Our Doctors ({filteredDoctorsByDept.length})
               </h2>
-              <p className="text-xs text-slate-500">Qualified specialists ready to assist you</p>
+              <p className="text-[11px] sm:text-xs text-slate-500">Qualified specialists ready to assist you</p>
             </div>
-            <div className="flex gap-2">
-              <button onClick={scrollLeft} className="w-9 h-9 rounded-lg border border-slate-300 flex items-center justify-center hover:bg-slate-100 text-slate-900 font-bold transition text-base shadow-xs">
+            <div className="flex gap-1.5">
+              <button onClick={scrollLeft} className="w-8 h-8 rounded-lg border border-slate-300 flex items-center justify-center hover:bg-slate-100 text-slate-900 font-bold transition text-sm shadow-xs">
                 ‹
               </button>
-              <button onClick={scrollRight} className="w-9 h-9 rounded-lg border border-slate-300 flex items-center justify-center hover:bg-slate-100 text-slate-900 font-bold transition text-base shadow-xs">
+              <button onClick={scrollRight} className="w-8 h-8 rounded-lg border border-slate-300 flex items-center justify-center hover:bg-slate-100 text-slate-900 font-bold transition text-sm shadow-xs">
                 ›
               </button>
             </div>
@@ -653,18 +662,18 @@ export default function Home() {
 
           <div 
             ref={scrollRef}
-            className="flex gap-4 sm:gap-5 overflow-x-auto scrollbar-hide pb-4 snap-x snap-mandatory"
+            className="flex gap-3.5 sm:gap-5 overflow-x-auto scrollbar-hide pb-4 snap-x snap-mandatory w-full"
             style={{ scrollbarWidth: 'none', msOverflowStyle: 'none' }}
           >
             {filteredDoctorsByDept.map((doc, idx) => (
               <div 
                 key={`home-doc-card-${doc.doctor_no || doc.id || idx}-${idx}`} 
                 onClick={() => handleCardClick(doc)}
-                className="min-w-[250px] sm:min-w-[275px] max-w-[280px] bg-white border border-slate-200 rounded-2xl p-3.5 text-center shadow-xs hover:shadow-md transition snap-start flex-shrink-0 cursor-pointer group flex flex-col justify-between relative overflow-hidden"
+                className="min-w-[240px] sm:min-w-[275px] max-w-[280px] bg-white border border-slate-200 rounded-2xl p-3 text-center shadow-xs hover:shadow-md transition snap-start flex-shrink-0 cursor-pointer group flex flex-col justify-between relative overflow-hidden"
               >
                 {getDoctorBadge(doc.days, doc.status)}
 
-                <div className="w-full h-48 sm:h-52 mx-auto rounded-xl bg-slate-50 mb-3 overflow-hidden border border-slate-100 flex items-center justify-center relative">
+                <div className="w-full h-44 sm:h-52 mx-auto rounded-xl bg-slate-50 mb-3 overflow-hidden border border-slate-100 flex items-center justify-center relative">
                   <img 
                     src={doc.image_url || `/doctors/doctor-${doc.doctor_no || 1}.png`} 
                     alt={doc.name} 
@@ -678,24 +687,24 @@ export default function Home() {
                   )}
                 </div>
 
-                <div className="bg-[#e6f4f4]/60 border border-[#008080]/20 rounded-xl p-3 text-left">
-                  <h3 className="font-bold text-slate-900 text-sm line-clamp-1">{doc.name}</h3>
-                  <p className="text-[11px] text-slate-600 mt-0.5 font-semibold line-clamp-1">{doc.degree}</p>
+                <div className="bg-[#e6f4f4]/60 border border-[#008080]/20 rounded-xl p-2.5 text-left">
+                  <h3 className="font-bold text-slate-900 text-xs sm:text-sm line-clamp-1">{doc.name}</h3>
+                  <p className="text-[10px] sm:text-[11px] text-slate-600 mt-0.5 font-semibold line-clamp-1">{doc.degree}</p>
                   
                   <p className="text-[10px] text-slate-500 line-clamp-1 italic mt-0.5">
                     {doc.details || 'Specialist Consultant'}
                   </p>
 
                   <div className="flex justify-between items-center mt-2 pt-2 border-t border-[#008080]/15">
-                    <p className="text-xs text-[#008080] font-extrabold line-clamp-1">
+                    <p className="text-[11px] sm:text-xs text-[#008080] font-extrabold line-clamp-1">
                       {getSpecializationWithIconText(doc.specialization)}
                     </p>
-                    <span className="text-[11px] font-bold text-slate-700 bg-white px-2 py-0.5 rounded border border-teal-200">
+                    <span className="text-[10px] sm:text-[11px] font-bold text-slate-700 bg-white px-2 py-0.5 rounded border border-teal-200">
                       {doc.fee || doc.follow_up_fee || '500 BDT'}
                     </span>
                   </div>
 
-                  <button className={`w-full mt-2.5 py-1.5 rounded-lg text-xs font-bold transition shadow-xs ${doc.status === 'Absent' ? 'bg-slate-400 text-white cursor-not-allowed' : 'bg-[#008080] hover:bg-[#006666] text-white'}`}>
+                  <button className={`w-full mt-2 py-1.5 rounded-lg text-xs font-bold transition shadow-xs ${doc.status === 'Absent' ? 'bg-slate-400 text-white cursor-not-allowed' : 'bg-[#008080] hover:bg-[#006666] text-white'}`}>
                     {doc.status === 'Absent' ? 'Doctor Absent' : 'Make Appointment'}
                   </button>
                 </div>
@@ -706,14 +715,14 @@ export default function Home() {
       </div>
 
       {/* Footer */}
-      <footer className="bg-[#008080] text-white py-10 px-4 sm:px-12 mt-12 border-t border-teal-700">
-        <div className="max-w-7xl mx-auto grid grid-cols-1 md:grid-cols-3 gap-8 items-start">
+      <footer className="bg-[#008080] text-white py-10 px-4 sm:px-12 mt-12 border-t border-teal-700 w-full">
+        <div className="w-full grid grid-cols-1 md:grid-cols-3 gap-8 items-start">
           <div>
             <div className="flex items-center gap-3 mb-3">
               <div className="w-10 h-10 flex items-center justify-center bg-white rounded-xl p-1 shadow-xs">
                 <img src="/logo.png" alt="Logo" className="w-full h-full object-contain animate-3d-spin" />
               </div>
-              <span className="font-bold text-sm sm:text-base text-white">Delta Health Care Jatrabari Ltd.</span>
+              <span className="font-bold text-sm sm:text-base text-white">ডেল্টা হেলথ্ কেয়ার যাত্রাবাড়ী লিমিটেড</span>
             </div>
             <p className="text-xs sm:text-sm text-teal-100 leading-relaxed font-medium">
               We’re always by your side on your healthcare journey providing trusted services to help you stay healthy.
@@ -743,8 +752,8 @@ export default function Home() {
           </div>
         </div>
 
-        <div className="max-w-7xl mx-auto border-t border-teal-700/80 mt-8 pt-6 flex flex-col md:flex-row items-center justify-between gap-4 text-xs text-teal-100 font-medium text-center md:text-left">
-          <p>© 2026 Delta Health Care Jatrabari Ltd. All rights reserved.</p>
+        <div className="w-full border-t border-teal-700/80 mt-8 pt-6 flex flex-col md:flex-row items-center justify-between gap-4 text-xs text-teal-100 font-medium text-center md:text-left">
+          <p>© 2026 Delta Health Care Jatrabari Limited. All rights reserved.</p>
           <div className="flex flex-wrap items-center justify-center gap-2 bg-white/10 px-3 py-1.5 rounded-xl">
             <span className="text-[10px] font-bold text-white mr-1">Pay with:</span>
             <span className="bg-white text-slate-900 px-2 py-0.5 rounded font-bold text-[9px]">bKash</span>
@@ -754,7 +763,7 @@ export default function Home() {
         </div>
       </footer>
 
-      {/* Patient Lab Report Download Modal (Pulse Style) */}
+      {/* Download Report Modal */}
       {isReportModalOpen && (
         <div className="fixed inset-0 bg-black/60 backdrop-blur-xs flex items-center justify-center p-4 z-50">
           <div className="bg-white rounded-2xl max-w-lg w-full p-6 shadow-2xl relative animate-in fade-in zoom-in duration-200">
@@ -766,24 +775,21 @@ export default function Home() {
             </button>
 
             <div className="text-center mb-5">
-              <div className="w-12 h-12 bg-teal-50 text-[#008080] rounded-full flex items-center justify-center mx-auto text-xl mb-2 border border-teal-100">
-                📄
-              </div>
+              <div className="w-12 h-12 bg-teal-50 text-[#008080] rounded-full flex items-center justify-center mx-auto text-xl mb-2 border border-teal-100">📄</div>
               <h3 className="text-lg font-black text-slate-900">Download Diagnostic Lab Report</h3>
-              <p className="text-xs text-slate-500 mt-0.5">Enter your registered mobile number to find your ready reports</p>
+              <p className="text-xs text-slate-500 mt-0.5">Enter your invoice / slip serial number to find ready reports</p>
             </div>
 
-            <form onSubmit={handleSearchReports} className="space-y-3 mb-5">
+            <form onSubmit={handleSearchReports} className="space-y-3 mb-4">
               <div>
-                <label className="text-xs font-bold text-slate-700">Patient Mobile Number</label>
+                <label className="text-xs font-bold text-slate-700">Invoice / Serial Number <span className="text-rose-500">*</span></label>
                 <div className="flex gap-2 mt-1">
                   <input 
-                    type="tel"
+                    type="text"
                     required
-                    maxLength={11}
-                    value={reportPhone}
-                    onChange={e => setReportPhone(e.target.value.replace(/\D/g, ''))}
-                    placeholder="017XXXXXXXX (11 digits)"
+                    value={reportInvoice}
+                    onChange={e => setReportInvoice(e.target.value)}
+                    placeholder="e.g. #1 or EQ#333"
                     className="flex-1 border rounded-xl px-3 py-2 text-sm font-mono outline-none focus:ring-2 focus:ring-teal-500"
                   />
                   <button 
@@ -791,7 +797,7 @@ export default function Home() {
                     disabled={searchingReport}
                     className="bg-[#008080] hover:bg-[#006666] text-white px-5 py-2 rounded-xl text-xs font-bold transition shadow-xs disabled:bg-slate-300"
                   >
-                    {searchingReport ? 'Searching...' : 'Find Reports'}
+                    {searchingReport ? 'Searching...' : 'Find Report'}
                   </button>
                 </div>
               </div>
@@ -799,34 +805,74 @@ export default function Home() {
 
             {reportSearched && (
               <div className="border-t pt-4">
-                <h4 className="text-xs font-bold text-slate-700 mb-2.5">Available Reports ({patientReports.length}):</h4>
-                {patientReports.length === 0 ? (
+                {!reportResult ? (
                   <div className="text-center py-6 bg-slate-50 rounded-xl border border-slate-100">
-                    <p className="text-xs text-slate-500">No reports found for this mobile number yet.</p>
-                    <p className="text-[10px] text-slate-400 mt-1">Please contact counter if your test was done recently.</p>
+                    <p className="text-xs text-slate-500">No booking or report found with this invoice/serial number.</p>
                   </div>
                 ) : (
-                  <div className="space-y-2 max-h-56 overflow-y-auto pr-1">
-                    {patientReports.map((rep) => (
-                      <div key={rep.id} className="flex justify-between items-center p-3 rounded-xl bg-slate-50 border border-slate-200">
-                        <div>
-                          <p className="text-xs font-bold text-slate-800">{rep.report_name}</p>
-                          <span className="text-[10px] text-slate-400 font-mono">Date: {rep.created_at ? new Date(rep.created_at).toLocaleDateString() : 'Recent'}</span>
-                        </div>
-                        <a 
-                          href={rep.file_url} 
-                          target="_blank" 
-                          rel="noreferrer"
-                          className="bg-[#008080] hover:bg-[#006666] text-white text-[11px] font-bold px-3 py-1.5 rounded-lg flex items-center gap-1 shadow-xs transition"
-                        >
-                          <span>📥</span> View / Download
-                        </a>
-                      </div>
-                    ))}
+                  <div className="bg-slate-50 rounded-xl p-4 border border-slate-200 space-y-2 text-xs">
+                    <div className="flex justify-between border-b pb-1.5">
+                      <span className="text-slate-500 font-medium">Patient Name:</span>
+                      <span className="font-bold text-slate-900">{reportResult.patient_name}</span>
+                    </div>
+                    <div className="flex justify-between border-b pb-1.5">
+                      <span className="text-slate-500 font-medium">Serial / Invoice:</span>
+                      <span className="font-mono font-bold text-[#008080]">#{reportResult.serial_number}</span>
+                    </div>
+                    <div className="flex justify-between border-b pb-1.5">
+                      <span className="text-slate-500 font-medium">Booking Date:</span>
+                      <span className="font-bold text-slate-900">{reportResult.booking_date}</span>
+                    </div>
+                    <div className="flex justify-between items-center pt-1">
+                      <span className="text-slate-500 font-medium">Status:</span>
+                      <span className="bg-emerald-100 text-emerald-800 font-bold px-2 py-0.5 rounded text-[10px]">Ready / Verified</span>
+                    </div>
                   </div>
                 )}
               </div>
             )}
+          </div>
+        </div>
+      )}
+
+      {/* Package Modal */}
+      {isPackageModalOpen && (
+        <div className="fixed inset-0 bg-black/60 backdrop-blur-xs flex items-center justify-center p-4 z-50">
+          <div className="bg-white rounded-2xl max-w-lg w-full p-6 shadow-2xl relative animate-in fade-in zoom-in duration-200">
+            <button 
+              onClick={() => setIsPackageModalOpen(false)}
+              className="absolute top-4 right-4 text-slate-400 hover:text-slate-600 font-bold text-lg cursor-pointer"
+            >
+              ✕
+            </button>
+            <div className="text-center mb-5">
+              <div className="w-12 h-12 bg-rose-50 text-rose-600 rounded-full flex items-center justify-center mx-auto text-xl mb-2 border border-rose-100">📦</div>
+              <h3 className="text-lg font-black text-slate-900">Health Checkup Packages</h3>
+              <p className="text-xs text-slate-500 mt-0.5">Special discounted health screening packages for families</p>
+            </div>
+            <div className="space-y-3 max-h-64 overflow-y-auto pr-1 text-xs">
+              <div className="p-3 bg-slate-50 rounded-xl border border-slate-200 flex justify-between items-center">
+                <div>
+                  <p className="font-bold text-slate-900 text-sm">General Health Package</p>
+                  <p className="text-slate-500 text-[11px]">CBC, Random Blood Sugar, SGPT, Creatinine</p>
+                </div>
+                <span className="font-extrabold text-[#008080] bg-teal-50 px-2.5 py-1 rounded border border-teal-200">1,200 BDT</span>
+              </div>
+              <div className="p-3 bg-slate-50 rounded-xl border border-slate-200 flex justify-between items-center">
+                <div>
+                  <p className="font-bold text-slate-900 text-sm">Cardiac Wellness Package</p>
+                  <p className="text-slate-500 text-[11px]">ECG, Lipid Profile, RBS, Serum Creatinine, Chest X-Ray</p>
+                </div>
+                <span className="font-extrabold text-[#008080] bg-teal-50 px-2.5 py-1 rounded border border-teal-200">2,500 BDT</span>
+              </div>
+              <div className="p-3 bg-slate-50 rounded-xl border border-slate-200 flex justify-between items-center">
+                <div>
+                  <p className="font-bold text-slate-900 text-sm">Diabetes Comprehensive Package</p>
+                  <p className="text-slate-500 text-[11px]">HbA1c, Fasting Blood Sugar, Urine R/E, Lipid Profile</p>
+                </div>
+                <span className="font-extrabold text-[#008080] bg-teal-50 px-2.5 py-1 rounded border border-teal-200">1,800 BDT</span>
+              </div>
+            </div>
           </div>
         </div>
       )}
