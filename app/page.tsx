@@ -3,8 +3,10 @@
 import { useEffect, useState, useRef, useCallback } from 'react'
 import { supabase } from '@/lib/supabase'
 import { sharedDoctors } from '@/lib/doctors'
+import { useRouter } from 'next/navigation'
 
 export default function Home() {
+  const router = useRouter()
   const [isLoading, setIsLoading] = useState(true)
   const [isModalOpen, setIsModalOpen] = useState(false)
   const [isQuickReserveOpen, setIsQuickReserveOpen] = useState(false)
@@ -27,90 +29,38 @@ export default function Home() {
 
   const [doctors, setDoctors] = useState<any[]>(sharedDoctors)
 
-  const shouldResetAbsentStatus = (updatedAtStr?: string) => {
-    if (!updatedAtStr) return false
-    const updatedDate = new Date(updatedAtStr)
-    const now = new Date()
-
-    const bdNow = new Date(now.getTime() + (6 * 60 + now.getTimezoneOffset()) * 60000)
-    const bdUpdated = new Date(updatedDate.getTime() + (6 * 60 + updatedDate.getTimezoneOffset()) * 60000)
-
-    const bdCutoff = new Date(bdNow)
-    bdCutoff.setHours(2, 0, 0, 0)
-
-    if (bdNow >= bdCutoff && bdUpdated < bdCutoff) return true
-    if (bdNow.getTime() - bdUpdated.getTime() > 24 * 60 * 60 * 1000) return true
-    return false
+  const [adminClickCount, setAdminClickCount] = useState(0)
+  const handleSecretAdminAccess = () => {
+    setAdminClickCount(prev => {
+      const next = prev + 1
+      if (next >= 3) {
+        router.push('/admin')
+        return 0
+      }
+      return next
+    })
   }
 
   const syncLiveDoctorsWithDatabase = useCallback(async () => {
     try {
-      const { data: dbData } = await supabase.from('doctors').select('*').order('id', { ascending: true })
+      const { data: dbData } = await supabase.from('doctors').select('*')
       const dbList = dbData || []
-      const resetIds: any[] = []
 
-      const formattedDb = dbList.map((d: any) => {
-        let st = d.status || 'Present'
-        if (st === 'Absent' && shouldResetAbsentStatus(d.status_updated_at)) {
-          st = 'Present'
-          resetIds.push(d.id)
+      const finalDoctors = sharedDoctors.map((sDoc: any) => {
+        const foundDb = dbList.find((d: any) => d.doctor_no === sDoc.doctor_no || d.id?.toString() === sDoc.id?.toString() || d.name === sDoc.name)
+        if (foundDb) {
+          return {
+            ...sDoc,
+            status: foundDb.status || sDoc.status,
+            image_url: foundDb.image_url || sDoc.image_url
+          }
         }
-
-        let sch = d.schedule
-        if (typeof sch === 'string') {
-          try { sch = JSON.parse(sch) } catch (e) { sch = {} }
-        }
-
-        return {
-          ...d,
-          status: st,
-          fee: d.follow_up_fee || d.fee || '500 BDT',
-          days: Array.isArray(d.days) ? d.days : [],
-          sitting_hours: d.sitting_hours || '10:00 AM - 01:00 PM',
-          details: d.details || '',
-          schedule: sch
-        }
+        return sDoc
       })
 
-      const mergedMap = new Map<string, any>()
-
-      sharedDoctors.forEach((sDoc: any, idx: number) => {
-        const docNo = (sDoc.doctor_no || String(idx + 1)).trim()
-        mergedMap.set(docNo, {
-          ...sDoc,
-          doctor_no: docNo,
-          id: `doc-${docNo}`,
-          fee: sDoc.fee || sDoc.follow_up_fee || '500 BDT',
-          status: sDoc.status || 'Present',
-          details: sDoc.details || 'Specialized in Clinical Healthcare.'
-        })
-      })
-
-      formattedDb.forEach((dDoc: any, idx: number) => {
-        const docNo = (dDoc.doctor_no || String(idx + 1)).trim()
-        const existing = mergedMap.get(docNo)
-        mergedMap.set(docNo, {
-          ...(existing || {}),
-          ...dDoc,
-          doctor_no: docNo,
-          id: dDoc.id || `doc-${docNo}`,
-          fee: dDoc.follow_up_fee || dDoc.fee || existing?.fee || '500 BDT',
-          status: dDoc.status || 'Present',
-          image_url: dDoc.image_url || existing?.image_url || `/doctors/doctor-${docNo}.png`,
-          details: dDoc.details || existing?.details || 'Specialist Consultant'
-        })
-      })
-
-      setDoctors(Array.from(mergedMap.values()))
-
-      if (resetIds.length > 0) {
-        await supabase
-          .from('doctors')
-          .update({ status: 'Present', status_updated_at: new Date().toISOString() })
-          .in('id', resetIds)
-      }
+      setDoctors(finalDoctors)
     } catch (err) {
-      console.error('Doctor fetch error:', err)
+      console.error('Doctor sync error:', err)
       setDoctors(sharedDoctors)
     } finally {
       setIsLoading(false)
@@ -447,7 +397,7 @@ export default function Home() {
         <body>
           <div class="slip-box">
             <div class="header">
-              <h2>ডেল্টা হেলথ্ কেয়ার যাত্রাবাড়ী লিমিটেড</h2>
+              <h2>ডেলটা হেলথ্ কেয়ার যাত্রাবাড়ী লিমিটেড</h2>
               <p>Official Appointment Confirmation Slip</p>
             </div>
             <div class="serial-box">
@@ -490,7 +440,7 @@ export default function Home() {
             <img src="/logo.png" alt="Logo" className="w-full h-full object-contain animate-3d-spin" />
           </div>
           <h2 className="text-sm font-extrabold text-[#008080] tracking-wide mt-2">
-            ডেল্টা হেলথ্ কেয়ার যাত্রাবাড়ী লিমিটেড
+          ডেলটা হেলথ্ কেয়ার যাত্রাবাড়ী লিমিটেড
           </h2>
         </div>
       </div>
@@ -511,39 +461,39 @@ export default function Home() {
       `}</style>
       
       <div className="w-full">
-        {/* Top Header - Perfect Mobile Responsive & Balanced Alignment */}
-        <header className="bg-white text-slate-800 py-3 px-3 sm:px-12 flex flex-row justify-between items-center gap-2 border-b border-slate-200 shadow-xs w-full">
-          <div className="flex items-center gap-2 sm:gap-3">
-            <div className="w-10 h-10 sm:w-12 sm:h-12 flex items-center justify-center bg-teal-50 rounded-xl p-1 shadow-xs border border-teal-100 flex-shrink-0">
+        {/* Top Header - Exact reference style layout with divider line & precise "ডেল্টা" spelling */}
+        <header className="bg-white text-slate-800 py-3.5 px-3 sm:px-12 flex flex-row justify-between items-center gap-2 border-b border-slate-200 shadow-xs w-full">
+          <div className="flex items-center gap-2.5 sm:gap-3.5">
+            <div className="w-11 h-11 sm:w-12 sm:h-12 flex items-center justify-center bg-teal-50 rounded-xl p-1 shadow-xs border border-teal-100 flex-shrink-0">
               <img src="/logo.png" alt="Logo" className="w-full h-full object-contain animate-3d-spin" />
             </div>
             
             <div className="flex flex-col justify-center">
-              <h2 className="text-[11px] sm:text-sm font-black text-[#007b7b] leading-tight tracking-normal whitespace-nowrap">
-                ডেল্টা হেলথ্ কেয়ার যাত্রাবাড়ী লিমিটেড
+              <h2 className="text-[12px] sm:text-sm font-black text-[#007b7b] leading-tight tracking-normal whitespace-nowrap">
+              ডেলটা হেলথ্ কেয়ার যাত্রাবাড়ী লিমিটেড
               </h2>
               <div className="w-full border-b-[1.5px] border-[#007b7b] my-0.5"></div>
               <h1 className="text-[10px] sm:text-xs font-bold text-rose-600 tracking-wider leading-tight whitespace-nowrap">
-                Delta Health Care Jatrabari Limited
+                DELTA HEALTH CARE JATRABARI LIMITED
               </h1>
             </div>
           </div>
 
-          <div className="flex items-center gap-2 sm:gap-4 flex-shrink-0">
-            <div className="hidden sm:flex flex-col text-right">
-              <span className="text-[10px] text-slate-500 font-semibold">Emergency & Serial Hotline</span>
-              <a href="tel:09666720320" className="text-sm font-black tracking-wider text-[#008080] hover:underline font-mono">
-                09666720320
-              </a>
-            </div>
-
-            <a href="/admin" className="bg-teal-50 hover:bg-teal-100 text-[#008080] border border-teal-200 px-3 py-1.5 rounded-lg font-bold text-xs transition shadow-xs whitespace-nowrap">
-              Staff Portal
+          {/* Hotline Pill Design with direct call action */}
+          <div className="flex items-center flex-shrink-0">
+            <a href="tel:09666720320" className="flex items-center bg-white border border-[#008080] rounded-full shadow-sm overflow-hidden hover:opacity-95 transition cursor-pointer">
+              <div className="bg-[#008080] text-white w-8 h-8 sm:w-10 sm:h-10 flex items-center justify-center rounded-full m-0.5 text-sm sm:text-base">
+                📞
+              </div>
+              <div className="px-2.5 sm:px-4 py-1 text-left">
+                <span className="text-[9px] sm:text-[10px] text-[#008080] font-black block tracking-widest uppercase">HOT LINE</span>
+                <span className="text-xs sm:text-sm font-black text-slate-800 font-mono tracking-tight block">09666720320</span>
+              </div>
             </a>
           </div>
         </header>
 
-        {/* Sticky 2nd Navigation Bar - Fully Uniform Quick Reserve Style */}
+        {/* Sticky 2nd Navigation Bar */}
         <div className="sticky top-0 z-40 bg-slate-50 border-b border-slate-200 py-2.5 px-3 sm:px-12 flex items-center justify-between shadow-xs backdrop-blur-md bg-opacity-95 w-full">
           <div className="flex items-center gap-2 sm:gap-3 text-xs font-bold w-full overflow-x-auto scrollbar-hide py-0.5">
             <a href="#home-service" className="border border-rose-500 text-rose-600 hover:bg-rose-600 hover:text-white px-3 sm:px-4 py-1.5 rounded-full text-[10px] sm:text-xs font-black transition uppercase flex items-center gap-1 shadow-xs cursor-pointer bg-rose-50/50 whitespace-nowrap flex-shrink-0">
@@ -714,15 +664,19 @@ export default function Home() {
         </section>
       </div>
 
-      {/* Footer */}
+      {/* Footer - With secret 3-click trigger on logo to access Admin Panel */}
       <footer className="bg-[#008080] text-white py-10 px-4 sm:px-12 mt-12 border-t border-teal-700 w-full">
         <div className="w-full grid grid-cols-1 md:grid-cols-3 gap-8 items-start">
           <div>
             <div className="flex items-center gap-3 mb-3">
-              <div className="w-10 h-10 flex items-center justify-center bg-white rounded-xl p-1 shadow-xs">
+              <div 
+                onClick={handleSecretAdminAccess} 
+                className="w-10 h-10 flex items-center justify-center bg-white rounded-xl p-1 shadow-xs cursor-pointer" 
+                title="Staff Portal Access"
+              >
                 <img src="/logo.png" alt="Logo" className="w-full h-full object-contain animate-3d-spin" />
               </div>
-              <span className="font-bold text-sm sm:text-base text-white">ডেল্টা হেলথ্ কেয়ার যাত্রাবাড়ী লিমিটেড</span>
+              <span className="font-bold text-sm sm:text-base text-white">ডেলটা হেলথ্ কেয়ার যাত্রাবাড়ী লিমিটেড</span>
             </div>
             <p className="text-xs sm:text-sm text-teal-100 leading-relaxed font-medium">
               We’re always by your side on your healthcare journey providing trusted services to help you stay healthy.
@@ -765,11 +719,11 @@ export default function Home() {
 
       {/* Download Report Modal */}
       {isReportModalOpen && (
-        <div className="fixed inset-0 bg-black/60 backdrop-blur-xs flex items-center justify-center p-4 z-50">
-          <div className="bg-white rounded-2xl max-w-lg w-full p-6 shadow-2xl relative animate-in fade-in zoom-in duration-200">
+        <div className="fixed inset-0 bg-black/60 backdrop-blur-xs flex items-center justify-center p-3 sm:p-4 z-50 overflow-y-auto">
+          <div className="bg-white rounded-2xl max-w-lg w-full p-5 sm:p-6 shadow-2xl relative my-auto max-h-[92vh] overflow-y-auto animate-in fade-in zoom-in duration-200">
             <button 
               onClick={() => setIsReportModalOpen(false)}
-              className="absolute top-4 right-4 text-slate-400 hover:text-slate-600 font-bold text-lg cursor-pointer"
+              className="absolute top-4 right-4 text-slate-400 hover:text-slate-600 font-bold text-lg cursor-pointer bg-slate-100 w-8 h-8 rounded-full flex items-center justify-center"
             >
               ✕
             </button>
@@ -837,11 +791,11 @@ export default function Home() {
 
       {/* Package Modal */}
       {isPackageModalOpen && (
-        <div className="fixed inset-0 bg-black/60 backdrop-blur-xs flex items-center justify-center p-4 z-50">
-          <div className="bg-white rounded-2xl max-w-lg w-full p-6 shadow-2xl relative animate-in fade-in zoom-in duration-200">
+        <div className="fixed inset-0 bg-black/60 backdrop-blur-xs flex items-center justify-center p-3 sm:p-4 z-50 overflow-y-auto">
+          <div className="bg-white rounded-2xl max-w-lg w-full p-5 sm:p-6 shadow-2xl relative my-auto max-h-[92vh] overflow-y-auto animate-in fade-in zoom-in duration-200">
             <button 
               onClick={() => setIsPackageModalOpen(false)}
-              className="absolute top-4 right-4 text-slate-400 hover:text-slate-600 font-bold text-lg cursor-pointer"
+              className="absolute top-4 right-4 text-slate-400 hover:text-slate-600 font-bold text-lg cursor-pointer bg-slate-100 w-8 h-8 rounded-full flex items-center justify-center"
             >
               ✕
             </button>
@@ -879,11 +833,11 @@ export default function Home() {
 
       {/* Quick Reserve Modal */}
       {isQuickReserveOpen && (
-        <div className="fixed inset-0 bg-black/60 backdrop-blur-xs flex items-center justify-center p-4 z-50">
-          <div className="bg-white rounded-2xl max-w-lg w-full p-6 sm:p-8 shadow-2xl relative animate-in fade-in zoom-in duration-200">
+        <div className="fixed inset-0 bg-black/60 backdrop-blur-xs flex items-center justify-center p-3 sm:p-4 z-50 overflow-y-auto">
+          <div className="bg-white rounded-2xl max-w-lg w-full p-5 sm:p-8 shadow-2xl relative my-auto max-h-[92vh] overflow-y-auto animate-in fade-in zoom-in duration-200">
             <button 
               onClick={() => setIsQuickReserveOpen(false)}
-              className="absolute top-4 right-4 text-slate-400 hover:text-slate-600 font-bold text-lg cursor-pointer"
+              className="absolute top-4 right-4 text-slate-400 hover:text-slate-600 font-bold text-lg cursor-pointer bg-slate-100 w-8 h-8 rounded-full flex items-center justify-center"
             >
               ✕
             </button>
@@ -971,13 +925,13 @@ export default function Home() {
         </div>
       )}
 
-      {/* Doctor Booking Modal */}
+      {/* Doctor Booking Modal - Fully Mobile Optimized with Smooth Vertical Scrolling */}
       {isModalOpen && (
-        <div className="fixed inset-0 bg-black/60 backdrop-blur-xs flex items-center justify-center p-4 z-50">
-          <div className="bg-white rounded-2xl max-w-xl w-full p-6 sm:p-8 shadow-2xl relative animate-in fade-in zoom-in duration-200">
+        <div className="fixed inset-0 bg-black/60 backdrop-blur-xs flex items-center justify-center p-3 sm:p-4 z-50 overflow-y-auto">
+          <div className="bg-white rounded-2xl max-w-xl w-full p-5 sm:p-8 shadow-2xl relative my-auto max-h-[92vh] overflow-y-auto animate-in fade-in zoom-in duration-200">
             <button 
               onClick={() => setIsModalOpen(false)}
-              className="absolute top-4 right-4 text-slate-400 hover:text-slate-600 font-bold text-lg cursor-pointer"
+              className="absolute top-4 right-4 text-slate-400 hover:text-slate-600 font-bold text-lg cursor-pointer z-10 bg-slate-100 w-8 h-8 rounded-full flex items-center justify-center"
             >
               ✕
             </button>
