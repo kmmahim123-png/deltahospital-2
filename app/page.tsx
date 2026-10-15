@@ -19,6 +19,7 @@ export default function Home() {
 
   const [reportInvoice, setReportInvoice] = useState('')
   const [reportResult, setReportResult] = useState<any>(null)
+  const [labReportList, setLabReportList] = useState<any[]>([])
   const [searchingReport, setSearchingReport] = useState(false)
   const [reportSearched, setReportSearched] = useState(false)
 
@@ -29,36 +30,71 @@ export default function Home() {
 
   const [doctors, setDoctors] = useState<any[]>(sharedDoctors)
 
-  const [adminClickCount, setAdminClickCount] = useState(0)
   const handleSecretAdminAccess = () => {
-    setAdminClickCount(prev => {
-      const next = prev + 1
-      if (next >= 3) {
-        router.push('/admin')
-        return 0
-      }
-      return next
-    })
+    router.push('/admin')
+  }
+
+  const getTodayBDDate = () => {
+    const now = new Date()
+    const bdTime = new Date(now.toLocaleString('en-US', { timeZone: 'Asia/Dhaka' }))
+    const year = bdTime.getFullYear()
+    const month = String(bdTime.getMonth() + 1).padStart(2, '0')
+    const day = String(bdTime.getDate()).padStart(2, '0')
+    return `${year}-${month}-${day}`
+  }
+
+  const parseDoctorDaysArray = (rawDays: any, fallbackDays?: string[]): string[] => {
+    let result: string[] = []
+    if (Array.isArray(rawDays)) {
+      result = rawDays.flatMap(item => typeof item === 'string' ? item.split(',') : [])
+    } else if (typeof rawDays === 'string') {
+      const cleaned = rawDays.replace(/[\[\]{}"']/g, '')
+      result = cleaned.split(',')
+    }
+    result = result.map(s => s.trim()).filter(Boolean)
+    if (result.length === 0 && fallbackDays) {
+      return fallbackDays
+    }
+    return result
   }
 
   const syncLiveDoctorsWithDatabase = useCallback(async () => {
     try {
-      const { data: dbData } = await supabase.from('doctors').select('*')
+      const todayStr = getTodayBDDate()
+      await supabase.from('bookings').delete().lt('booking_date', todayStr)
+
+      const { data: dbData } = await supabase.from('doctors').select('*').order('id', { ascending: true })
       const dbList = dbData || []
 
-      const finalDoctors = sharedDoctors.map((sDoc: any) => {
-        const foundDb = dbList.find((d: any) => d.doctor_no === sDoc.doctor_no || d.id?.toString() === sDoc.id?.toString() || d.name === sDoc.name)
-        if (foundDb) {
-          return {
-            ...sDoc,
-            status: foundDb.status || sDoc.status,
-            image_url: foundDb.image_url || sDoc.image_url
-          }
-        }
-        return sDoc
-      })
+      if (dbList.length > 0) {
+        const syncedList = dbList.map((dbDoc: any, index: number) => {
+          const fallbackDoc = sharedDoctors.find(
+            (s: any) => s.doctor_no?.toString() === dbDoc.doctor_no?.toString() || s.name?.toLowerCase().trim() === dbDoc.name?.toLowerCase().trim()
+          )
+          const parsedDays = parseDoctorDaysArray(dbDoc.days, fallbackDoc?.days || ['Saturday', 'Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday'])
 
-      setDoctors(finalDoctors)
+          return {
+            ...fallbackDoc,
+            ...dbDoc,
+            id: dbDoc.id || fallbackDoc?.id || String(index + 1),
+            doctor_no: dbDoc.doctor_no || fallbackDoc?.doctor_no || String(index + 1),
+            name: dbDoc.name || fallbackDoc?.name,
+            degree: dbDoc.degree || fallbackDoc?.degree || '',
+            details: dbDoc.details || fallbackDoc?.details || 'Specialist Consultant',
+            branch: dbDoc.branch || fallbackDoc?.branch || 'Delta Health Care',
+            specialization: dbDoc.specialization || fallbackDoc?.specialization || 'Medicine',
+            fee: dbDoc.follow_up_fee || dbDoc.fee || fallbackDoc?.fee || '600 BDT',
+            follow_up_fee: dbDoc.follow_up_fee || dbDoc.fee || fallbackDoc?.fee || '600 BDT',
+            days: parsedDays,
+            sitting_hours: dbDoc.sitting_hours || fallbackDoc?.sitting_hours || '04:00 PM - 08:00 PM',
+            image_url: dbDoc.image_url || fallbackDoc?.image_url || '/doctors/doctor-1.png',
+            status: dbDoc.status || fallbackDoc?.status || 'Present'
+          }
+        })
+        setDoctors(syncedList)
+      } else {
+        setDoctors(sharedDoctors)
+      }
     } catch (err) {
       console.error('Doctor sync error:', err)
       setDoctors(sharedDoctors)
@@ -109,30 +145,33 @@ export default function Home() {
     return `${getDeptEmoji(spec)} ${spec}`;
   }
 
-  const getDoctorBadge = (days: string[], status: string) => {
+  const getDoctorBadge = (days: any, status: string) => {
     if (status === 'Absent') {
       return <span className="absolute top-3 left-3 bg-rose-600 text-white text-[10px] font-bold px-2.5 py-1 rounded-md shadow z-10">Absent</span>
     }
 
+    const cleanDays = parseDoctorDaysArray(days).map(d => d.toLowerCase())
     const todayObj = new Date()
     const tomorrowObj = new Date()
     tomorrowObj.setDate(todayObj.getDate() + 1)
-    const todayName = todayObj.toLocaleDateString('en-US', { weekday: 'long' })
-    const tomorrowName = tomorrowObj.toLocaleDateString('en-US', { weekday: 'long' })
+    const todayName = todayObj.toLocaleDateString('en-US', { weekday: 'long' }).toLowerCase()
+    const tomorrowName = tomorrowObj.toLocaleDateString('en-US', { weekday: 'long' }).toLowerCase()
 
-    if (days && days.includes(todayName)) {
+    if (cleanDays.some(d => d.includes(todayName) || todayName.includes(d))) {
       return <span className="absolute top-3 left-3 bg-emerald-600 text-white text-[10px] font-bold px-2.5 py-1 rounded-md shadow z-10">Today</span>
-    } else if (days && days.includes(tomorrowName)) {
+    } else if (cleanDays.some(d => d.includes(tomorrowName) || tomorrowName.includes(d))) {
       return <span className="absolute top-3 left-3 bg-purple-600 text-white text-[10px] font-bold px-2.5 py-1 rounded-md shadow z-10">Tomorrow</span>
     }
     return null
   }
 
-  const departments = [
+  const baseDepartments = [
     "All", "Gynae & Obs.", "Cardiology", "Neonatal", "Medicine", "Neuro Medicine", 
     "Gastroenterology", "Orthopedic", "ENT", "General Surgery", "Nephrology", 
     "Hematology", "Dermatology", "Physiotherapy", "Dental / Oral Implantology", "Urology", "Vascular Surgery"
   ]
+  const dynamicSpecs = Array.from(new Set(doctors.map(d => d.specialization).filter(Boolean)))
+  const departments = Array.from(new Set([...baseDepartments, ...dynamicSpecs]))
 
   const filteredDoctorsByDept = selectedDept === "All" 
     ? doctors 
@@ -154,18 +193,19 @@ export default function Home() {
   }, [heroSlides.length])
 
   const scrollRef = useRef<HTMLDivElement>(null)
-  const scrollLeft = () => { if (scrollRef.current) scrollRef.current.scrollBy({ left: -300, behavior: 'smooth' }) }
-  const scrollRight = () => { if (scrollRef.current) scrollRef.current.scrollBy({ left: 300, behavior: 'smooth' }) }
+  const scrollLeft = () => { if (scrollRef.current) scrollRef.current.scrollBy({ left: -280, behavior: 'smooth' }) }
+  const scrollRight = () => { if (scrollRef.current) scrollRef.current.scrollBy({ left: 280, behavior: 'smooth' }) }
 
-  const getTop3AvailableDates = (doctorDays: string[]) => {
+  const getTop3AvailableDates = (doctorDays: any) => {
     const list = []
     const today = new Date()
+    const cleanDays = parseDoctorDaysArray(doctorDays).map(d => d.toLowerCase())
     for (let i = 0; i < 60; i++) {
       if (list.length >= 3) break;
       const d = new Date(today)
       d.setDate(today.getDate() + i)
       const weekday = d.toLocaleDateString('en-US', { weekday: 'long' })
-      if (doctorDays && doctorDays.includes(weekday)) {
+      if (cleanDays.some(cd => cd.includes(weekday.toLowerCase()) || weekday.toLowerCase().includes(cd))) {
         list.push({
           dateStr: d.toISOString().split('T')[0],
           display: d.toLocaleDateString('en-US', { weekday: 'short', day: 'numeric', month: 'short', year: '2-digit' }),
@@ -189,7 +229,7 @@ export default function Home() {
 
   const handleDoctorChange = (docId: string) => {
     setFormData(prev => ({ ...prev, doctor_id: docId }))
-    const doc = doctors.find(d => d.id?.toString() === docId || d.doctor_no === docId)
+    const doc = doctors.find(d => d.id?.toString() === docId || d.doctor_no?.toString() === docId)
     if (doc) {
       setSelectedDoctor(doc)
       const validDates = getTop3AvailableDates(doc.days)
@@ -299,9 +339,8 @@ export default function Home() {
     e.preventDefault()
     if (quickForm.contact.length !== 11) { alert('Contact number must be 11 digits.'); return; }
     
-    const serialNumStr = "EQ#" + String(Math.floor(100 + Math.random() * 900))
     const serialNumInt = Math.floor(100 + Math.random() * 900)
-    const todayStr = new Date().toISOString().split('T')[0]
+    const todayStr = getTodayBDDate()
 
     try {
       await supabase.from('bookings').insert({
@@ -310,11 +349,13 @@ export default function Home() {
         doctor_id: `Emergency-${quickReserveType}`,
         booking_date: todayStr,
         age: quickForm.age ? parseInt(quickForm.age) : null,
-        patient_type: 'Online',
+        patient_type: 'Emergency',
         symptoms: `Quick Reservation: ${quickReserveType}`,
         serial_number: serialNumInt,
         status: 'Confirmed'
       })
+
+      const customSmsMessage = `Dear Patient/Attendant, your '${quickReserveType}' booking has been successfully confirmed for ${todayStr}. Thank you for choosing Delta Health Care Jatrabari Ltd.For more information Call: 09666720320\nLocation Map: https://share.google/Gr8O0DTGxw96MwyZp`
 
       try {
         await fetch('https://client.giosms.com/api/v1/send', {
@@ -326,7 +367,7 @@ export default function Home() {
           },
           body: JSON.stringify({
             to: `88${quickForm.contact}`,
-            message: `Delta Health Care Jatrabari Ltd.\nDear Patient/Attendant, your ${quickReserveType} booking has been successfully confirmed for ${todayStr}. Thank you for choosing Delta Health Care Jatrabari Ltd. For more information Call: 09666720320\nLocation Map: https://share.google/Gr8O0DTGxw96MwyZp`,
+            message: customSmsMessage,
             sender_id: '8809666720320',
             type: 'transactional'
           })
@@ -343,23 +384,43 @@ export default function Home() {
 
   const handleSearchReports = async (e: React.FormEvent) => {
     e.preventDefault()
-    if (!reportInvoice.trim()) {
-      alert('Please enter a valid Invoice or Serial number')
+    const query = reportInvoice.trim()
+    if (!query) {
+      alert('Please enter your Invoice Number (e.g. INV-1001), Serial Number, or Phone Number')
       return
     }
     setSearchingReport(true)
     setReportSearched(true)
-    try {
-      const cleanInv = reportInvoice.trim().replace('#', '')
-      const { data, error } = await supabase
-        .from('bookings')
-        .select('*')
-        .or(`serial_number.eq.${cleanInv},phone.eq.${reportInvoice.trim()}`)
-        .limit(1)
+    setLabReportList([])
+    setReportResult(null)
 
-      if (error) throw error
-      if (data && data.length > 0) {
-        setReportResult(data[0])
+    try {
+      const { data: labData } = await supabase
+        .from('lab_reports')
+        .select('*')
+        .or(`invoice_no.ilike.%${query}%,phone.eq.${query}`)
+        .order('id', { ascending: false })
+
+      if (labData && labData.length > 0) {
+        setLabReportList(labData)
+        setReportResult(labData[0])
+        return
+      }
+
+      const cleanInv = query.replace('#', '').replace('EQ', '')
+      const numericSerial = parseInt(cleanInv)
+      let bookingQuery = supabase.from('bookings').select('*')
+
+      if (!isNaN(numericSerial) && query.length < 10) {
+        bookingQuery = bookingQuery.or(`serial_number.eq.${numericSerial},phone.eq.${query}`)
+      } else {
+        bookingQuery = bookingQuery.eq('phone', query)
+      }
+
+      const { data: bookingData } = await bookingQuery.order('id', { ascending: false }).limit(1)
+
+      if (bookingData && bookingData.length > 0) {
+        setReportResult({ ...bookingData[0], is_booking_slip: true })
       } else {
         setReportResult(null)
       }
@@ -369,6 +430,75 @@ export default function Home() {
     } finally {
       setSearchingReport(false)
     }
+  }
+
+  const handlePrintLabReportFromHome = (report: any) => {
+    const printWin = window.open('', '', 'left=0,top=0,width=850,height=750')
+    if (!printWin) return
+
+    printWin.document.write(`
+      <html>
+        <head>
+          <title>Lab Report - ${report.invoice_no}</title>
+          <style>
+            @page { size: A4; margin: 15mm; }
+            body { font-family: 'Segoe UI', Arial, sans-serif; color: #0f172a; padding: 10px; }
+            .header { display: flex; justify-content: space-between; align-items: center; border-bottom: 3px solid #008080; padding-bottom: 12px; margin-bottom: 20px; }
+            .title-bn { font-size: 20px; font-weight: 900; color: #008080; margin: 0; }
+            .title-en { font-size: 13px; font-weight: 800; color: #e11d48; margin: 2px 0; }
+            .addr { font-size: 11px; color: #475569; margin: 0; }
+            .meta-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; background: #f8fafc; border: 1px solid #cbd5e1; border-radius: 10px; padding: 14px; font-size: 12px; margin-bottom: 20px; }
+            .meta-row { display: flex; justify-content: space-between; border-bottom: 1px dashed #e2e8f0; padding-bottom: 4px; }
+            .report-title { text-align: center; background: #008080; color: #fff; font-weight: 800; padding: 8px; border-radius: 6px; font-size: 14px; letter-spacing: 1px; margin-bottom: 20px; text-transform: uppercase; }
+            .result-box { min-height: 280px; border: 1px solid #e2e8f0; border-radius: 10px; padding: 18px; font-size: 13px; line-height: 1.7; white-space: pre-wrap; background: #fff; }
+            .footer { margin-top: 50px; display: flex; justify-content: space-between; font-size: 12px; color: #334155; padding-top: 20px; }
+            .sig-line { border-top: 1px solid #334155; width: 180px; text-align: center; padding-top: 6px; font-weight: 700; }
+          </style>
+        </head>
+        <body>
+          <div class="header">
+            <div>
+              <h1 class="title-bn">ডেলটা হেলথ্ কেয়ার যাত্রাবাড়ী লিমিটেড</h1>
+              <h2 class="title-en">DELTA HEALTH CARE JATRABARI LIMITED</h2>
+              <p class="addr">169/1-B, West Dholaipar, Jatrabari, Dhaka | Hotline: 09666720320</p>
+            </div>
+            <div style="text-align: right;">
+              <div style="font-size: 16px; font-weight: 900; color: #008080;">${report.invoice_no}</div>
+              <div style="font-size: 11px; color: #64748b;">Date: ${report.test_date}</div>
+              <div style="font-size: 11px; font-weight: 700; color: #059669;">Status: ${report.delivery_status}</div>
+            </div>
+          </div>
+
+          <div class="meta-grid">
+            <div class="meta-row"><span><b>Patient Name:</b></span> <span>${report.patient_name}</span></div>
+            <div class="meta-row"><span><b>Age / Gender:</b></span> <span>${report.age || '-'} Yrs / ${report.gender || 'Male'}</span></div>
+            <div class="meta-row"><span><b>Phone Number:</b></span> <span>${report.phone}</span></div>
+            <div class="meta-row"><span><b>Referred By:</b></span> <span>${report.referred_by || 'Self'}</span></div>
+            <div class="meta-row"><span><b>Investigation:</b></span> <span><b>${report.test_name}</b></span></div>
+            <div class="meta-row"><span><b>Payment Status:</b></span> <span>${report.payment_status} (${report.amount || ''})</span></div>
+          </div>
+
+          <div class="report-title">Diagnostic Investigation Report — ${report.test_name}</div>
+
+          <div class="result-box">${report.report_summary || 'Test completed accurately. All parameters evaluated.'}</div>
+
+          ${report.file_url && report.file_url.startsWith('data:image') ? `
+            <div style="margin-top: 15px; text-align: center;">
+              <img src="${report.file_url}" style="max-width: 100%; max-height: 360px; border-radius: 8px; border: 1px solid #cbd5e1;" />
+            </div>
+          ` : ''}
+
+          <div class="footer">
+            <div class="sig-line">Medical Technologist (Lab)</div>
+            <div class="sig-line">Pathologist / Consultant</div>
+            <div class="sig-line">Authorized Signature</div>
+          </div>
+        </body>
+      </html>
+    `)
+    printWin.document.close()
+    printWin.focus()
+    setTimeout(() => { printWin.print() }, 400)
   }
 
   const handlePrintSlip = () => {
@@ -397,7 +527,7 @@ export default function Home() {
         <body>
           <div class="slip-box">
             <div class="header">
-              <h2>ডেলটা হেলথ্ কেয়ার যাত্রাবাড়ী লিমিটেড</h2>
+              <h2>ডেলটা হেলথ্ কেয়ার যাত্রাবাড়ী লিমিটেড</h2>
               <p>Official Appointment Confirmation Slip</p>
             </div>
             <div class="serial-box">
@@ -436,11 +566,11 @@ export default function Home() {
           }
         `}</style>
         <div className="flex flex-col items-center">
-          <div className="w-28 h-28 flex items-center justify-center p-2 shadow-xl rounded-2xl border border-teal-100 bg-white mb-4">
+          <div className="w-24 h-24 flex items-center justify-center p-2 shadow-xl rounded-2xl border border-teal-100 bg-white mb-4">
             <img src="/logo.png" alt="Logo" className="w-full h-full object-contain animate-3d-spin" />
           </div>
-          <h2 className="text-sm font-extrabold text-[#008080] tracking-wide mt-2">
-          ডেলটা হেলথ্ কেয়ার যাত্রাবাড়ী লিমিটেড
+          <h2 className="text-xs font-extrabold text-[#008080] tracking-wide mt-2 text-center px-4">
+            ডেলটা হেলথ্ কেয়ার যাত্রাবাড়ী লিমিটেড
           </h2>
         </div>
       </div>
@@ -461,80 +591,79 @@ export default function Home() {
       `}</style>
       
       <div className="w-full">
-        {/* Top Header - Exact reference style layout with divider line & precise "ডেল্টা" spelling */}
-        <header className="bg-white text-slate-800 py-3.5 px-3 sm:px-12 flex flex-row justify-between items-center gap-2 border-b border-slate-200 shadow-xs w-full">
-          <div className="flex items-center gap-2.5 sm:gap-3.5">
-            <div className="w-11 h-11 sm:w-12 sm:h-12 flex items-center justify-center bg-teal-50 rounded-xl p-1 shadow-xs border border-teal-100 flex-shrink-0">
+        {/* Top Header - Mobile Optimized */}
+        <header className="bg-white text-slate-800 py-3 px-3 sm:px-12 flex flex-row justify-between items-center gap-2 border-b border-slate-200 shadow-xs w-full">
+          <div className="flex items-center gap-2.5">
+            <div className="w-10 h-10 sm:w-12 sm:h-12 flex items-center justify-center bg-teal-50 rounded-xl p-1 shadow-xs border border-teal-100 flex-shrink-0">
               <img src="/logo.png" alt="Logo" className="w-full h-full object-contain animate-3d-spin" />
             </div>
             
             <div className="flex flex-col justify-center">
-              <h2 className="text-[12px] sm:text-sm font-black text-[#007b7b] leading-tight tracking-normal whitespace-nowrap">
-              ডেলটা হেলথ্ কেয়ার যাত্রাবাড়ী লিমিটেড
+              <h2 className="text-[11px] sm:text-sm font-black text-[#007b7b] leading-tight tracking-normal whitespace-nowrap">
+                ডেলটা হেলথ্ কেয়ার যাত্রাবাড়ী লিমিটেড
               </h2>
               <div className="w-full border-b-[1.5px] border-[#007b7b] my-0.5"></div>
-              <h1 className="text-[10px] sm:text-xs font-bold text-rose-600 tracking-wider leading-tight whitespace-nowrap">
+              <h1 className="text-[9px] sm:text-xs font-bold text-rose-600 tracking-wider leading-tight whitespace-nowrap">
                 DELTA HEALTH CARE JATRABARI LIMITED
               </h1>
             </div>
           </div>
 
-          {/* Hotline Pill Design with direct call action */}
           <div className="flex items-center flex-shrink-0">
-            <a href="tel:09666720320" className="flex items-center bg-white border border-[#008080] rounded-full shadow-sm overflow-hidden hover:opacity-95 transition cursor-pointer">
-              <div className="bg-[#008080] text-white w-8 h-8 sm:w-10 sm:h-10 flex items-center justify-center rounded-full m-0.5 text-sm sm:text-base">
+            <a href="tel:09666720320" className="flex items-center bg-white border border-[#008080] rounded-full shadow-sm overflow-hidden hover:opacity-95 transition cursor-pointer py-0.5 px-1 sm:px-2">
+              <div className="bg-[#008080] text-white w-7 h-7 sm:w-9 sm:h-9 flex items-center justify-center rounded-full text-xs sm:text-sm flex-shrink-0">
                 📞
               </div>
-              <div className="px-2.5 sm:px-4 py-1 text-left">
-                <span className="text-[9px] sm:text-[10px] text-[#008080] font-black block tracking-widest uppercase">HOT LINE</span>
+              <div className="px-2 text-left hidden xs:block">
+                <span className="text-[9px] text-[#008080] font-black block leading-none">HOTLINE</span>
                 <span className="text-xs sm:text-sm font-black text-slate-800 font-mono tracking-tight block">09666720320</span>
               </div>
             </a>
           </div>
         </header>
 
-        {/* Sticky 2nd Navigation Bar */}
-        <div className="sticky top-0 z-40 bg-slate-50 border-b border-slate-200 py-2.5 px-3 sm:px-12 flex items-center justify-between shadow-xs backdrop-blur-md bg-opacity-95 w-full">
-          <div className="flex items-center gap-2 sm:gap-3 text-xs font-bold w-full overflow-x-auto scrollbar-hide py-0.5">
-            <a href="#home-service" className="border border-rose-500 text-rose-600 hover:bg-rose-600 hover:text-white px-3 sm:px-4 py-1.5 rounded-full text-[10px] sm:text-xs font-black transition uppercase flex items-center gap-1 shadow-xs cursor-pointer bg-rose-50/50 whitespace-nowrap flex-shrink-0">
+        {/* Sticky Action Buttons Bar */}
+        <div className="sticky top-0 z-40 bg-slate-50/95 border-b border-slate-200 py-2 px-3 sm:px-12 flex items-center justify-between shadow-xs backdrop-blur-md w-full">
+          <div className="flex items-center gap-1.5 sm:gap-3 text-xs font-bold w-full overflow-x-auto scrollbar-hide py-1">
+            <a href="#home-service" className="border border-rose-500 text-rose-600 hover:bg-rose-600 hover:text-white px-3 py-1.5 rounded-full text-[10px] sm:text-xs font-black transition uppercase flex items-center gap-1 shadow-xs cursor-pointer bg-rose-50/50 whitespace-nowrap flex-shrink-0">
               Home Service
             </a>
             
             <button 
               onClick={() => { setQuickSubmitted(false); setQuickForm({ name: '', age: '', contact: '' }); setIsQuickReserveOpen(true); }}
-              className="border border-rose-500 text-rose-600 hover:bg-rose-600 hover:text-white px-3 sm:px-4 py-1.5 rounded-full text-[10px] sm:text-xs font-black transition uppercase flex items-center gap-1 shadow-xs cursor-pointer bg-rose-50/50 whitespace-nowrap flex-shrink-0"
+              className="border border-rose-500 text-rose-600 hover:bg-rose-600 hover:text-white px-3 py-1.5 rounded-full text-[10px] sm:text-xs font-black transition uppercase flex items-center gap-1 shadow-xs cursor-pointer bg-rose-50/50 whitespace-nowrap flex-shrink-0"
             >
               <span>⚡</span> Quick Reserve
             </button>
 
             <button 
-              onClick={() => { setIsReportModalOpen(true); setReportSearched(false); setReportResult(null); setReportInvoice(''); }}
-              className="border border-rose-500 text-rose-600 hover:bg-rose-600 hover:text-white px-3 sm:px-4 py-1.5 rounded-full text-[10px] sm:text-xs font-black transition uppercase flex items-center gap-1 shadow-xs cursor-pointer bg-rose-50/50 whitespace-nowrap flex-shrink-0"
+              onClick={() => { setIsReportModalOpen(true); setReportSearched(false); setReportResult(null); setLabReportList([]); setReportInvoice(''); }}
+              className="border border-rose-500 text-rose-600 hover:bg-rose-600 hover:text-white px-3 py-1.5 rounded-full text-[10px] sm:text-xs font-black transition uppercase flex items-center gap-1 shadow-xs cursor-pointer bg-rose-50/50 whitespace-nowrap flex-shrink-0"
             >
               <span>📄</span> Download Report
             </button>
 
             <button 
               onClick={() => setIsPackageModalOpen(true)}
-              className="border border-rose-500 text-rose-600 hover:bg-rose-600 hover:text-white px-3 sm:px-4 py-1.5 rounded-full text-[10px] sm:text-xs font-black transition uppercase flex items-center gap-1 shadow-xs cursor-pointer bg-rose-50/50 whitespace-nowrap flex-shrink-0"
+              className="border border-rose-500 text-rose-600 hover:bg-rose-600 hover:text-white px-3 py-1.5 rounded-full text-[10px] sm:text-xs font-black transition uppercase flex items-center gap-1 shadow-xs cursor-pointer bg-rose-50/50 whitespace-nowrap flex-shrink-0"
             >
               <span>📦</span> Package
             </button>
           </div>
         </div>
 
-        {/* Hero Section */}
-        <section className="w-full px-3 sm:px-12 py-4 sm:py-8">
-          <div className={`w-full bg-gradient-to-r ${heroSlides[currentSlide].bgGradient} rounded-3xl p-5 sm:p-12 flex flex-col md:flex-row items-center justify-between shadow-xs border ${heroSlides[currentSlide].border} relative overflow-hidden transition-all duration-500`}>
-            <div className="max-w-2xl mb-6 md:mb-0 z-10 text-center md:text-left w-full">
-              <h1 className="text-xl sm:text-4xl md:text-5xl font-black text-slate-900 leading-tight">
+        {/* Hero Banner Section */}
+        <section className="w-full px-3 sm:px-12 py-3 sm:py-6">
+          <div className={`w-full bg-gradient-to-r ${heroSlides[currentSlide].bgGradient} rounded-3xl p-4 sm:p-10 flex flex-col md:flex-row items-center justify-between shadow-xs border ${heroSlides[currentSlide].border} relative overflow-hidden transition-all duration-500`}>
+            <div className="max-w-xl mb-4 md:mb-0 z-10 text-center md:text-left w-full">
+              <h1 className="text-lg sm:text-3xl md:text-5xl font-black text-slate-900 leading-snug">
                 Book Doctor Appointments <span className="text-[#008080]">Hassle-Free</span>
               </h1>
-              <p className="text-slate-700 mt-2 sm:mt-3 text-xs sm:text-base font-medium leading-relaxed">
+              <p className="text-slate-700 mt-2 text-xs sm:text-sm font-medium leading-relaxed">
                 {heroSlides[currentSlide].desc}
               </p>
               
-              <div className="flex justify-center md:justify-start gap-4 mt-5">
+              <div className="flex justify-center md:justify-start gap-4 mt-4">
                 <button 
                   onClick={() => { 
                     setAvailableDatesForDoc([]);
@@ -544,15 +673,15 @@ export default function Home() {
                     setBookedData(null);
                     setIsModalOpen(true); 
                   }}
-                  className="bg-[#008080] hover:bg-[#006666] text-white px-6 sm:px-8 py-3 rounded-xl font-bold text-xs sm:text-base transition shadow-md active:scale-95"
+                  className="bg-[#008080] hover:bg-[#006666] text-white px-6 py-2.5 rounded-xl font-bold text-xs sm:text-base transition shadow-md active:scale-95 w-full sm:w-auto"
                 >
                   Book Appointment Now
                 </button>
               </div>
             </div>
 
-            <div className="w-full md:w-auto flex justify-center z-10">
-              <div className="bg-white p-2 rounded-2xl shadow-md border border-slate-100 w-[220px] sm:w-[280px] h-[170px] sm:h-[220px] flex items-center justify-center overflow-hidden">
+            <div className="w-full md:w-auto flex justify-center z-10 mt-3 md:mt-0">
+              <div className="bg-white p-2 rounded-2xl shadow-md border border-slate-100 w-[180px] sm:w-[260px] h-[130px] sm:h-[200px] flex items-center justify-center overflow-hidden">
                 <img 
                   src={heroSlides[currentSlide].image} 
                   alt="Hospital Banner" 
@@ -562,12 +691,12 @@ export default function Home() {
               </div>
             </div>
 
-            <div className="absolute bottom-3 right-4 sm:right-10 flex gap-1.5 z-20">
+            <div className="absolute bottom-2 right-4 flex gap-1.5 z-20">
               {heroSlides.map((_, index) => (
                 <button
                   key={index}
                   onClick={() => setCurrentSlide(index)}
-                  className={`h-2 rounded-full transition-all duration-300 ${currentSlide === index ? 'bg-[#008080] w-5' : 'bg-slate-300 w-2'}`}
+                  className={`h-1.5 rounded-full transition-all duration-300 ${currentSlide === index ? 'bg-[#008080] w-4' : 'bg-slate-300 w-1.5'}`}
                   aria-label={`Slide ${index + 1}`}
                 />
               ))}
@@ -575,14 +704,14 @@ export default function Home() {
           </div>
         </section>
 
-        {/* Department Filter Chips Bar */}
-        <section className="w-full px-3 sm:px-12 py-2 sm:py-4">
-          <div className="flex items-center gap-2 overflow-x-auto scrollbar-hide py-2 px-1 w-full" style={{ scrollbarWidth: 'none', msOverflowStyle: 'none' }}>
+        {/* Departments Filter Bar */}
+        <section className="w-full px-3 sm:px-12 py-2">
+          <div className="flex items-center gap-2 overflow-x-auto scrollbar-hide py-1 px-0.5 w-full" style={{ scrollbarWidth: 'none', msOverflowStyle: 'none' }}>
             {departments.map((dept, idx) => (
               <button
                 key={`dept-${idx}`}
                 onClick={() => setSelectedDept(dept)}
-                className={`flex items-center gap-1.5 px-3.5 py-2 rounded-full text-xs font-bold whitespace-nowrap transition-all shadow-xs flex-shrink-0 ${selectedDept === dept ? 'bg-[#008080] text-white' : 'bg-slate-100 text-slate-700 hover:bg-slate-200'}`}
+                className={`flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-bold whitespace-nowrap transition-all shadow-xs flex-shrink-0 ${selectedDept === dept ? 'bg-[#008080] text-white' : 'bg-slate-100 text-slate-700 hover:bg-slate-200'}`}
               >
                 <span>{getDeptEmoji(dept)}</span>
                 <span>{dept}</span>
@@ -591,20 +720,20 @@ export default function Home() {
           </div>
         </section>
 
-        {/* Our Doctors Section */}
-        <section id="doctors" className="w-full px-3 sm:px-12 py-4 sm:py-6">
-          <div className="flex justify-between items-center mb-4">
+        {/* Doctors List Grid Section - Fully Mobile Optimized */}
+        <section id="doctors" className="w-full px-3 sm:px-12 py-4">
+          <div className="flex justify-between items-center mb-3">
             <div>
-              <h2 className="text-lg sm:text-3xl font-black text-slate-900">
+              <h2 className="text-base sm:text-2xl font-black text-slate-900">
                 Our Doctors ({filteredDoctorsByDept.length})
               </h2>
-              <p className="text-[11px] sm:text-xs text-slate-500">Qualified specialists ready to assist you</p>
+              <p className="text-[10px] sm:text-xs text-slate-500">Qualified specialists ready to assist you</p>
             </div>
-            <div className="flex gap-1.5">
-              <button onClick={scrollLeft} className="w-8 h-8 rounded-lg border border-slate-300 flex items-center justify-center hover:bg-slate-100 text-slate-900 font-bold transition text-sm shadow-xs">
+            <div className="flex gap-1">
+              <button onClick={scrollLeft} className="w-7 h-7 rounded-lg border border-slate-300 flex items-center justify-center hover:bg-slate-100 text-slate-900 font-bold text-xs shadow-xs">
                 ‹
               </button>
-              <button onClick={scrollRight} className="w-8 h-8 rounded-lg border border-slate-300 flex items-center justify-center hover:bg-slate-100 text-slate-900 font-bold transition text-sm shadow-xs">
+              <button onClick={scrollRight} className="w-7 h-7 rounded-lg border border-slate-300 flex items-center justify-center hover:bg-slate-100 text-slate-900 font-bold text-xs shadow-xs">
                 ›
               </button>
             </div>
@@ -612,18 +741,18 @@ export default function Home() {
 
           <div 
             ref={scrollRef}
-            className="flex gap-3.5 sm:gap-5 overflow-x-auto scrollbar-hide pb-4 snap-x snap-mandatory w-full"
+            className="flex gap-3 overflow-x-auto scrollbar-hide pb-3 snap-x snap-mandatory w-full"
             style={{ scrollbarWidth: 'none', msOverflowStyle: 'none' }}
           >
             {filteredDoctorsByDept.map((doc, idx) => (
               <div 
-                key={`home-doc-card-${doc.doctor_no || doc.id || idx}-${idx}`} 
+                key={`home-doc-card-${doc.id || doc.doctor_no || idx}-${idx}`} 
                 onClick={() => handleCardClick(doc)}
-                className="min-w-[240px] sm:min-w-[275px] max-w-[280px] bg-white border border-slate-200 rounded-2xl p-3 text-center shadow-xs hover:shadow-md transition snap-start flex-shrink-0 cursor-pointer group flex flex-col justify-between relative overflow-hidden"
+                className="w-[210px] sm:w-[260px] bg-white border border-slate-200 rounded-2xl p-2.5 text-center shadow-xs hover:shadow-md transition snap-start flex-shrink-0 cursor-pointer group flex flex-col justify-between relative overflow-hidden"
               >
                 {getDoctorBadge(doc.days, doc.status)}
 
-                <div className="w-full h-44 sm:h-52 mx-auto rounded-xl bg-slate-50 mb-3 overflow-hidden border border-slate-100 flex items-center justify-center relative">
+                <div className="w-full h-36 sm:h-48 mx-auto rounded-xl bg-slate-50 mb-2.5 overflow-hidden border border-slate-100 flex items-center justify-center relative">
                   <img 
                     src={doc.image_url || `/doctors/doctor-${doc.doctor_no || 1}.png`} 
                     alt={doc.name} 
@@ -632,29 +761,29 @@ export default function Home() {
                   />
                   {doc.status === 'Absent' && (
                     <div className="absolute inset-0 bg-rose-900/30 backdrop-blur-[1px] flex items-center justify-center">
-                      <span className="bg-rose-600 text-white font-extrabold text-xs px-3 py-1 rounded-full shadow-lg">Absent Today</span>
+                      <span className="bg-rose-600 text-white font-extrabold text-[11px] px-2.5 py-0.5 rounded-full shadow-lg">Absent Today</span>
                     </div>
                   )}
                 </div>
 
-                <div className="bg-[#e6f4f4]/60 border border-[#008080]/20 rounded-xl p-2.5 text-left">
+                <div className="bg-[#e6f4f4]/60 border border-[#008080]/20 rounded-xl p-2 text-left">
                   <h3 className="font-bold text-slate-900 text-xs sm:text-sm line-clamp-1">{doc.name}</h3>
-                  <p className="text-[10px] sm:text-[11px] text-slate-600 mt-0.5 font-semibold line-clamp-1">{doc.degree}</p>
+                  <p className="text-[10px] text-slate-600 mt-0.5 font-semibold line-clamp-1">{doc.degree}</p>
                   
-                  <p className="text-[10px] text-slate-500 line-clamp-1 italic mt-0.5">
+                  <p className="text-[9px] text-slate-500 line-clamp-1 italic mt-0.5">
                     {doc.details || 'Specialist Consultant'}
                   </p>
 
-                  <div className="flex justify-between items-center mt-2 pt-2 border-t border-[#008080]/15">
-                    <p className="text-[11px] sm:text-xs text-[#008080] font-extrabold line-clamp-1">
+                  <div className="flex justify-between items-center mt-1.5 pt-1.5 border-t border-[#008080]/15">
+                    <p className="text-[10px] text-[#008080] font-extrabold line-clamp-1">
                       {getSpecializationWithIconText(doc.specialization)}
                     </p>
-                    <span className="text-[10px] sm:text-[11px] font-bold text-slate-700 bg-white px-2 py-0.5 rounded border border-teal-200">
+                    <span className="text-[10px] font-bold text-slate-700 bg-white px-1.5 py-0.5 rounded border border-teal-200">
                       {doc.fee || doc.follow_up_fee || '500 BDT'}
                     </span>
                   </div>
 
-                  <button className={`w-full mt-2 py-1.5 rounded-lg text-xs font-bold transition shadow-xs ${doc.status === 'Absent' ? 'bg-slate-400 text-white cursor-not-allowed' : 'bg-[#008080] hover:bg-[#006666] text-white'}`}>
+                  <button className={`w-full mt-2 py-1.5 rounded-lg text-[11px] font-bold transition shadow-xs ${doc.status === 'Absent' ? 'bg-slate-400 text-white cursor-not-allowed' : 'bg-[#008080] hover:bg-[#006666] text-white'}`}>
                     {doc.status === 'Absent' ? 'Doctor Absent' : 'Make Appointment'}
                   </button>
                 </div>
@@ -664,51 +793,51 @@ export default function Home() {
         </section>
       </div>
 
-      {/* Footer - With secret 3-click trigger on logo to access Admin Panel */}
-      <footer className="bg-[#008080] text-white py-10 px-4 sm:px-12 mt-12 border-t border-teal-700 w-full">
-        <div className="w-full grid grid-cols-1 md:grid-cols-3 gap-8 items-start">
-          <div>
-            <div className="flex items-center gap-3 mb-3">
+      {/* Footer Section - Mobile Optimized */}
+      <footer className="bg-[#008080] text-white py-8 px-4 sm:px-12 mt-8 border-t border-teal-700 w-full">
+        <div className="w-full grid grid-cols-1 md:grid-cols-3 gap-6 items-start text-center md:text-left">
+          <div className="flex flex-col items-center md:items-start">
+            <div className="flex items-center gap-2 mb-2">
               <div 
                 onClick={handleSecretAdminAccess} 
-                className="w-10 h-10 flex items-center justify-center bg-white rounded-xl p-1 shadow-xs cursor-pointer" 
+                className="w-9 h-9 flex items-center justify-center bg-white rounded-xl p-1 shadow-xs cursor-pointer" 
                 title="Staff Portal Access"
               >
                 <img src="/logo.png" alt="Logo" className="w-full h-full object-contain animate-3d-spin" />
               </div>
-              <span className="font-bold text-sm sm:text-base text-white">ডেলটা হেলথ্ কেয়ার যাত্রাবাড়ী লিমিটেড</span>
+              <span className="font-bold text-xs sm:text-sm text-white">ডেলটা হেলথ্ কেয়ার যাত্রাবাড়ী লিমিটেড</span>
             </div>
-            <p className="text-xs sm:text-sm text-teal-100 leading-relaxed font-medium">
+            <p className="text-xs text-teal-100 leading-relaxed font-medium">
               We’re always by your side on your healthcare journey providing trusted services to help you stay healthy.
             </p>
           </div>
 
-          <div>
-            <h3 className="font-bold text-sm sm:text-base mb-3 text-white">Contact Us</h3>
-            <div className="space-y-2 text-xs sm:text-sm text-teal-100 font-medium">
-              <p className="flex items-start gap-2">
-                <span>📍</span> <span>169/1-B, West Dholaipar (Opposite to Geet Sangeet Cinema Hall)</span>
+          <div className="flex flex-col items-center md:items-start">
+            <h3 className="font-bold text-xs sm:text-sm mb-2 text-white">Contact Us</h3>
+            <div className="space-y-1.5 text-xs text-teal-100 font-medium">
+              <p className="flex items-start justify-center md:justify-start gap-1.5">
+                <span>📍</span> <span>169/1-B, West Dholaipar (Opp. Geet Sangeet Cinema Hall)</span>
               </p>
-              <p className="flex items-center gap-2">
+              <p className="flex items-center justify-center md:justify-start gap-1.5">
                 <span>📞</span> <a href="tel:09666720320" className="font-mono font-bold text-white hover:underline">09666720320</a>
               </p>
             </div>
           </div>
 
-          <div>
-            <h3 className="font-bold text-sm sm:text-base mb-3 text-white">Quick Links</h3>
-            <div className="flex gap-2.5">
-              <a href="https://www.facebook.com/deltahealthcarejatrabarilimited/" target="_blank" rel="noopener noreferrer" className="w-9 h-9 bg-white rounded-full flex items-center justify-center text-[#008080] font-bold shadow-xs hover:bg-slate-100 transition">f</a>
-              <a href="#" className="w-9 h-9 bg-white rounded-full flex items-center justify-center text-[#008080] font-bold shadow-xs hover:bg-slate-100 transition">t</a>
-              <a href="#" className="w-9 h-9 bg-white rounded-full flex items-center justify-center text-[#008080] font-bold shadow-xs hover:bg-slate-100 transition">w</a>
-              <a href="#" className="w-9 h-9 bg-white rounded-full flex items-center justify-center text-[#008080] font-bold shadow-xs hover:bg-slate-100 transition">in</a>
+          <div className="flex flex-col items-center md:items-start">
+            <h3 className="font-bold text-xs sm:text-sm mb-2 text-white">Quick Links</h3>
+            <div className="flex gap-2 justify-center md:justify-start">
+              <a href="https://www.facebook.com/deltahealthcarejatrabarilimited/" target="_blank" rel="noopener noreferrer" className="w-8 h-8 bg-white rounded-full flex items-center justify-center text-[#008080] font-bold shadow-xs hover:bg-slate-100 transition text-xs">f</a>
+              <a href="#" className="w-8 h-8 bg-white rounded-full flex items-center justify-center text-[#008080] font-bold shadow-xs hover:bg-slate-100 transition text-xs">t</a>
+              <a href="#" className="w-8 h-8 bg-white rounded-full flex items-center justify-center text-[#008080] font-bold shadow-xs hover:bg-slate-100 transition text-xs">w</a>
+              <a href="#" className="w-8 h-8 bg-white rounded-full flex items-center justify-center text-[#008080] font-bold shadow-xs hover:bg-slate-100 transition text-xs">in</a>
             </div>
           </div>
         </div>
 
-        <div className="w-full border-t border-teal-700/80 mt-8 pt-6 flex flex-col md:flex-row items-center justify-between gap-4 text-xs text-teal-100 font-medium text-center md:text-left">
+        <div className="w-full border-t border-teal-700/80 mt-6 pt-4 flex flex-col md:flex-row items-center justify-between gap-3 text-[11px] text-teal-100 font-medium text-center">
           <p>© 2026 Delta Health Care Jatrabari Limited. All rights reserved.</p>
-          <div className="flex flex-wrap items-center justify-center gap-2 bg-white/10 px-3 py-1.5 rounded-xl">
+          <div className="flex flex-wrap items-center justify-center gap-2 bg-white/10 px-3 py-1 rounded-xl">
             <span className="text-[10px] font-bold text-white mr-1">Pay with:</span>
             <span className="bg-white text-slate-900 px-2 py-0.5 rounded font-bold text-[9px]">bKash</span>
             <span className="bg-white text-slate-900 px-2 py-0.5 rounded font-bold text-[9px]">Nagad</span>
@@ -717,70 +846,111 @@ export default function Home() {
         </div>
       </footer>
 
-      {/* Download Report Modal */}
+      {/* Lab Report Modal */}
       {isReportModalOpen && (
-        <div className="fixed inset-0 bg-black/60 backdrop-blur-xs flex items-center justify-center p-3 sm:p-4 z-50 overflow-y-auto">
-          <div className="bg-white rounded-2xl max-w-lg w-full p-5 sm:p-6 shadow-2xl relative my-auto max-h-[92vh] overflow-y-auto animate-in fade-in zoom-in duration-200">
+        <div className="fixed inset-0 bg-black/60 backdrop-blur-xs flex items-center justify-center p-3 z-50 overflow-y-auto">
+          <div className="bg-white rounded-2xl max-w-lg w-full p-5 shadow-2xl relative my-auto max-h-[92vh] overflow-y-auto">
             <button 
               onClick={() => setIsReportModalOpen(false)}
-              className="absolute top-4 right-4 text-slate-400 hover:text-slate-600 font-bold text-lg cursor-pointer bg-slate-100 w-8 h-8 rounded-full flex items-center justify-center"
+              className="absolute top-3 right-3 text-slate-400 hover:text-slate-600 font-bold text-base cursor-pointer bg-slate-100 w-7 h-7 rounded-full flex items-center justify-center"
             >
               ✕
             </button>
 
-            <div className="text-center mb-5">
-              <div className="w-12 h-12 bg-teal-50 text-[#008080] rounded-full flex items-center justify-center mx-auto text-xl mb-2 border border-teal-100">📄</div>
-              <h3 className="text-lg font-black text-slate-900">Download Diagnostic Lab Report</h3>
-              <p className="text-xs text-slate-500 mt-0.5">Enter your invoice / slip serial number to find ready reports</p>
+            <div className="text-center mb-4">
+              <div className="w-10 h-10 bg-teal-50 text-[#008080] rounded-full flex items-center justify-center mx-auto text-base mb-1.5 border border-teal-100">📄</div>
+              <h3 className="text-base font-black text-slate-900">Download Diagnostic Lab Report</h3>
+              <p className="text-[11px] text-slate-500">Enter Invoice ID (INV-1001) or Phone Number</p>
             </div>
 
-            <form onSubmit={handleSearchReports} className="space-y-3 mb-4">
+            <form onSubmit={handleSearchReports} className="space-y-3 mb-3">
               <div>
-                <label className="text-xs font-bold text-slate-700">Invoice / Serial Number <span className="text-rose-500">*</span></label>
+                <label className="text-xs font-bold text-slate-700">Invoice ID / Phone Number *</label>
                 <div className="flex gap-2 mt-1">
                   <input 
                     type="text"
                     required
                     value={reportInvoice}
                     onChange={e => setReportInvoice(e.target.value)}
-                    placeholder="e.g. #1 or EQ#333"
-                    className="flex-1 border rounded-xl px-3 py-2 text-sm font-mono outline-none focus:ring-2 focus:ring-teal-500"
+                    placeholder="INV-1001 or 017XXXXXXXX"
+                    className="flex-1 border rounded-xl px-3 py-2 text-xs font-mono outline-none focus:ring-2 focus:ring-teal-500"
                   />
                   <button 
                     type="submit"
                     disabled={searchingReport}
-                    className="bg-[#008080] hover:bg-[#006666] text-white px-5 py-2 rounded-xl text-xs font-bold transition shadow-xs disabled:bg-slate-300"
+                    className="bg-[#008080] hover:bg-[#006666] text-white px-4 py-2 rounded-xl text-xs font-bold transition shadow-xs disabled:bg-slate-300"
                   >
-                    {searchingReport ? 'Searching...' : 'Find Report'}
+                    {searchingReport ? 'Searching...' : 'Find'}
                   </button>
                 </div>
               </div>
             </form>
 
             {reportSearched && (
-              <div className="border-t pt-4">
-                {!reportResult ? (
-                  <div className="text-center py-6 bg-slate-50 rounded-xl border border-slate-100">
-                    <p className="text-xs text-slate-500">No booking or report found with this invoice/serial number.</p>
+              <div className="border-t pt-3">
+                {labReportList.length > 0 ? (
+                  <div className="space-y-2.5 max-h-72 overflow-y-auto pr-1">
+                    {labReportList.map((rep) => (
+                      <div key={rep.id} className="bg-slate-50 rounded-xl p-3 border border-slate-200 space-y-1.5 text-xs">
+                        <div className="flex justify-between items-center border-b pb-1.5">
+                          <span className="font-mono font-black text-xs text-[#008080]">{rep.invoice_no}</span>
+                          <span className={`font-bold px-2 py-0.5 rounded text-[9px] ${rep.delivery_status === 'Ready' ? 'bg-emerald-100 text-emerald-800' : 'bg-amber-100 text-amber-800'}`}>
+                            {rep.delivery_status === 'Ready' ? '✅ Ready' : '⏳ Processing'}
+                          </span>
+                        </div>
+                        <div className="flex justify-between border-b pb-1">
+                          <span className="text-slate-500">Patient:</span>
+                          <span className="font-bold text-slate-900">{rep.patient_name}</span>
+                        </div>
+                        <div className="flex justify-between border-b pb-1">
+                          <span className="text-slate-500">Test:</span>
+                          <span className="font-bold text-[#008080]">{rep.test_name}</span>
+                        </div>
+                        {rep.delivery_status === 'Ready' ? (
+                          <div className="pt-1.5 flex gap-2">
+                            <button
+                              type="button"
+                              onClick={() => handlePrintLabReportFromHome(rep)}
+                              className="flex-1 bg-[#008080] hover:bg-[#006666] text-white py-1.5 px-2 rounded-lg font-bold text-[11px] transition text-center shadow-xs"
+                            >
+                              🖨️ Print / PDF
+                            </button>
+                            {rep.file_url && (
+                              <a
+                                href={rep.file_url}
+                                download={rep.file_name || `${rep.invoice_no}-report`}
+                                className="flex-1 bg-emerald-600 hover:bg-emerald-700 text-white py-1.5 px-2 rounded-lg font-bold text-[11px] transition text-center shadow-xs"
+                              >
+                                📥 File
+                              </a>
+                            )}
+                          </div>
+                        ) : (
+                          <div className="bg-amber-50 border border-amber-200 text-amber-800 p-2 rounded text-[10px] font-semibold text-center mt-1">
+                            ⏳ Report is processing in lab.
+                          </div>
+                        )}
+                      </div>
+                    ))}
                   </div>
-                ) : (
-                  <div className="bg-slate-50 rounded-xl p-4 border border-slate-200 space-y-2 text-xs">
-                    <div className="flex justify-between border-b pb-1.5">
-                      <span className="text-slate-500 font-medium">Patient Name:</span>
+                ) : reportResult && reportResult.is_booking_slip ? (
+                  <div className="bg-slate-50 rounded-xl p-3 border border-slate-200 space-y-1.5 text-xs">
+                    <div className="flex justify-between border-b pb-1">
+                      <span className="text-slate-500">Patient Name:</span>
                       <span className="font-bold text-slate-900">{reportResult.patient_name}</span>
                     </div>
-                    <div className="flex justify-between border-b pb-1.5">
-                      <span className="text-slate-500 font-medium">Serial / Invoice:</span>
+                    <div className="flex justify-between border-b pb-1">
+                      <span className="text-slate-500">Serial:</span>
                       <span className="font-mono font-bold text-[#008080]">#{reportResult.serial_number}</span>
                     </div>
-                    <div className="flex justify-between border-b pb-1.5">
-                      <span className="text-slate-500 font-medium">Booking Date:</span>
+                    <div className="flex justify-between border-b pb-1">
+                      <span className="text-slate-500">Date:</span>
                       <span className="font-bold text-slate-900">{reportResult.booking_date}</span>
                     </div>
-                    <div className="flex justify-between items-center pt-1">
-                      <span className="text-slate-500 font-medium">Status:</span>
-                      <span className="bg-emerald-100 text-emerald-800 font-bold px-2 py-0.5 rounded text-[10px]">Ready / Verified</span>
-                    </div>
+                  </div>
+                ) : (
+                  <div className="text-center py-4 bg-slate-50 rounded-xl border border-slate-100">
+                    <p className="text-xs text-slate-500 font-semibold">No lab report found with this ID or phone.</p>
                   </div>
                 )}
               </div>
@@ -791,40 +961,35 @@ export default function Home() {
 
       {/* Package Modal */}
       {isPackageModalOpen && (
-        <div className="fixed inset-0 bg-black/60 backdrop-blur-xs flex items-center justify-center p-3 sm:p-4 z-50 overflow-y-auto">
-          <div className="bg-white rounded-2xl max-w-lg w-full p-5 sm:p-6 shadow-2xl relative my-auto max-h-[92vh] overflow-y-auto animate-in fade-in zoom-in duration-200">
-            <button 
-              onClick={() => setIsPackageModalOpen(false)}
-              className="absolute top-4 right-4 text-slate-400 hover:text-slate-600 font-bold text-lg cursor-pointer bg-slate-100 w-8 h-8 rounded-full flex items-center justify-center"
-            >
-              ✕
-            </button>
-            <div className="text-center mb-5">
-              <div className="w-12 h-12 bg-rose-50 text-rose-600 rounded-full flex items-center justify-center mx-auto text-xl mb-2 border border-rose-100">📦</div>
-              <h3 className="text-lg font-black text-slate-900">Health Checkup Packages</h3>
-              <p className="text-xs text-slate-500 mt-0.5">Special discounted health screening packages for families</p>
+        <div className="fixed inset-0 bg-black/60 backdrop-blur-xs flex items-center justify-center p-3 z-50 overflow-y-auto">
+          <div className="bg-white rounded-2xl max-w-lg w-full p-5 shadow-2xl relative my-auto max-h-[92vh] overflow-y-auto">
+            <button onClick={() => setIsPackageModalOpen(false)} className="absolute top-3 right-3 text-slate-400 hover:text-slate-600 font-bold text-base bg-slate-100 w-7 h-7 rounded-full flex items-center justify-center">✕</button>
+            <div className="text-center mb-4">
+              <div className="w-10 h-10 bg-rose-50 text-rose-600 rounded-full flex items-center justify-center mx-auto text-base mb-1.5 border border-rose-100">📦</div>
+              <h3 className="text-base font-black text-slate-900">Health Checkup Packages</h3>
+              <p className="text-[11px] text-slate-500">Special discounted screening packages</p>
             </div>
-            <div className="space-y-3 max-h-64 overflow-y-auto pr-1 text-xs">
-              <div className="p-3 bg-slate-50 rounded-xl border border-slate-200 flex justify-between items-center">
+            <div className="space-y-2.5 text-xs">
+              <div className="p-2.5 bg-slate-50 rounded-xl border border-slate-200 flex justify-between items-center">
                 <div>
-                  <p className="font-bold text-slate-900 text-sm">General Health Package</p>
-                  <p className="text-slate-500 text-[11px]">CBC, Random Blood Sugar, SGPT, Creatinine</p>
+                  <p className="font-bold text-slate-900 text-xs">General Health Package</p>
+                  <p className="text-slate-500 text-[10px]">CBC, RBS, SGPT, Creatinine</p>
                 </div>
-                <span className="font-extrabold text-[#008080] bg-teal-50 px-2.5 py-1 rounded border border-teal-200">1,200 BDT</span>
+                <span className="font-extrabold text-[#008080] bg-teal-50 px-2 py-1 rounded text-[11px] border border-teal-200">1,200 BDT</span>
               </div>
-              <div className="p-3 bg-slate-50 rounded-xl border border-slate-200 flex justify-between items-center">
+              <div className="p-2.5 bg-slate-50 rounded-xl border border-slate-200 flex justify-between items-center">
                 <div>
-                  <p className="font-bold text-slate-900 text-sm">Cardiac Wellness Package</p>
-                  <p className="text-slate-500 text-[11px]">ECG, Lipid Profile, RBS, Serum Creatinine, Chest X-Ray</p>
+                  <p className="font-bold text-slate-900 text-xs">Cardiac Wellness Package</p>
+                  <p className="text-slate-500 text-[10px]">ECG, Lipid Profile, RBS, X-Ray</p>
                 </div>
-                <span className="font-extrabold text-[#008080] bg-teal-50 px-2.5 py-1 rounded border border-teal-200">2,500 BDT</span>
+                <span className="font-extrabold text-[#008080] bg-teal-50 px-2 py-1 rounded text-[11px] border border-teal-200">2,500 BDT</span>
               </div>
-              <div className="p-3 bg-slate-50 rounded-xl border border-slate-200 flex justify-between items-center">
+              <div className="p-2.5 bg-slate-50 rounded-xl border border-slate-200 flex justify-between items-center">
                 <div>
-                  <p className="font-bold text-slate-900 text-sm">Diabetes Comprehensive Package</p>
-                  <p className="text-slate-500 text-[11px]">HbA1c, Fasting Blood Sugar, Urine R/E, Lipid Profile</p>
+                  <p className="font-bold text-slate-900 text-xs">Diabetes Comprehensive Package</p>
+                  <p className="text-slate-500 text-[10px]">HbA1c, FBS, Urine R/E, Lipid</p>
                 </div>
-                <span className="font-extrabold text-[#008080] bg-teal-50 px-2.5 py-1 rounded border border-teal-200">1,800 BDT</span>
+                <span className="font-extrabold text-[#008080] bg-teal-50 px-2 py-1 rounded text-[11px] border border-teal-200">1,800 BDT</span>
               </div>
             </div>
           </div>
@@ -833,58 +998,51 @@ export default function Home() {
 
       {/* Quick Reserve Modal */}
       {isQuickReserveOpen && (
-        <div className="fixed inset-0 bg-black/60 backdrop-blur-xs flex items-center justify-center p-3 sm:p-4 z-50 overflow-y-auto">
-          <div className="bg-white rounded-2xl max-w-lg w-full p-5 sm:p-8 shadow-2xl relative my-auto max-h-[92vh] overflow-y-auto animate-in fade-in zoom-in duration-200">
-            <button 
-              onClick={() => setIsQuickReserveOpen(false)}
-              className="absolute top-4 right-4 text-slate-400 hover:text-slate-600 font-bold text-lg cursor-pointer bg-slate-100 w-8 h-8 rounded-full flex items-center justify-center"
-            >
-              ✕
-            </button>
+        <div className="fixed inset-0 bg-black/60 backdrop-blur-xs flex items-center justify-center p-3 z-50 overflow-y-auto">
+          <div className="bg-white rounded-2xl max-w-lg w-full p-5 sm:p-6 shadow-2xl relative my-auto max-h-[92vh] overflow-y-auto">
+            <button onClick={() => setIsQuickReserveOpen(false)} className="absolute top-3 right-3 text-slate-400 hover:text-slate-600 font-bold text-base bg-slate-100 w-7 h-7 rounded-full flex items-center justify-center">✕</button>
 
             {quickSubmitted ? (
-              <div className="text-center py-6">
-                <div className="w-14 h-14 bg-emerald-100 text-emerald-600 rounded-full flex items-center justify-center mx-auto text-3xl mb-3 font-bold">✓</div>
-                <h3 className="text-lg font-bold text-slate-900">Emergency Reservation Confirmed!</h3>
-                <p className="text-xs text-slate-600 mt-1.5 leading-relaxed">
-                  We have successfully registered your request. An official confirmation SMS with location details has been sent to your number.
-                </p>
-                <button onClick={() => setIsQuickReserveOpen(false)} className="mt-5 bg-[#008080] hover:bg-[#006666] text-white px-6 py-2.5 rounded-xl text-xs font-bold transition">
+              <div className="text-center py-5">
+                <div className="w-12 h-12 bg-emerald-100 text-emerald-600 rounded-full flex items-center justify-center mx-auto text-2xl mb-2.5 font-bold">✓</div>
+                <h3 className="text-base font-bold text-slate-900">Emergency Reservation Confirmed!</h3>
+                <p className="text-xs text-slate-600 mt-1">Confirmation SMS has been sent to your phone.</p>
+                <button onClick={() => setIsQuickReserveOpen(false)} className="mt-4 bg-[#008080] text-white px-5 py-2 rounded-xl text-xs font-bold transition">
                   Back to Home
                 </button>
               </div>
             ) : (
               <div>
-                <div className="text-center mb-5">
-                  <div className="w-12 h-12 bg-rose-50 text-rose-600 rounded-full flex items-center justify-center mx-auto text-xl mb-2 border border-rose-100">🏥</div>
-                  <h3 className="text-lg font-black text-slate-900">Book an Emergency Slot</h3>
-                  <p className="text-xs text-slate-500 mt-0.5">Select service category and provide contact details for immediate support</p>
+                <div className="text-center mb-4">
+                  <div className="w-10 h-10 bg-rose-50 text-rose-600 rounded-full flex items-center justify-center mx-auto text-base mb-1.5 border border-rose-100">🏥</div>
+                  <h3 className="text-base font-black text-slate-900">Book Emergency Slot</h3>
+                  <p className="text-[11px] text-slate-500">Select service category and provide contact</p>
                 </div>
 
-                <div className="grid grid-cols-5 gap-1.5 sm:gap-2 mb-4">
+                <div className="grid grid-cols-5 gap-1.5 mb-3">
                   {['NICU', 'PICU', 'ICU', 'General', 'OPD'].map((type) => (
                     <button
                       key={type}
                       type="button"
                       onClick={() => setQuickReserveType(type)}
-                      className={`py-2 px-1 rounded-xl text-xs font-bold border transition ${quickReserveType === type ? 'bg-[#008080] text-white border-[#008080] shadow-xs' : 'bg-slate-50 text-slate-700 border-slate-200 hover:bg-slate-100'}`}
+                      className={`py-1.5 px-1 rounded-xl text-[11px] font-bold border transition ${quickReserveType === type ? 'bg-[#008080] text-white border-[#008080]' : 'bg-slate-50 text-slate-700 border-slate-200'}`}
                     >
                       {type}
                     </button>
                   ))}
                 </div>
 
-                <form onSubmit={handleQuickSubmit} className="space-y-3">
+                <form onSubmit={handleQuickSubmit} className="space-y-2.5">
                   <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
                     <div className="sm:col-span-2">
-                      <label className="text-xs font-bold text-slate-700">Patient Name <span className="text-rose-500">*</span></label>
+                      <label className="text-xs font-bold text-slate-700">Patient Name *</label>
                       <input 
                         type="text" 
                         required 
                         value={quickForm.name} 
                         onChange={e => setQuickForm({...quickForm, name: e.target.value})}
-                        placeholder="Patient Full Name" 
-                        className="w-full border rounded-xl px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-teal-500 mt-1" 
+                        placeholder="Full Name" 
+                        className="w-full border rounded-xl px-3 py-2 text-xs outline-none focus:ring-2 focus:ring-teal-500 mt-1" 
                       />
                     </div>
                     <div>
@@ -894,27 +1052,27 @@ export default function Home() {
                         value={quickForm.age} 
                         onChange={e => setQuickForm({...quickForm, age: e.target.value})}
                         placeholder="Age" 
-                        className="w-full border rounded-xl px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-teal-500 mt-1" 
+                        className="w-full border rounded-xl px-3 py-2 text-xs outline-none focus:ring-2 focus:ring-teal-500 mt-1" 
                       />
                     </div>
                   </div>
 
                   <div>
-                    <label className="text-xs font-bold text-slate-700">Attendant Contact Number <span className="text-rose-500">*</span></label>
+                    <label className="text-xs font-bold text-slate-700">Contact Number *</label>
                     <input 
                       type="tel" 
                       required 
                       maxLength={11}
                       value={quickForm.contact} 
                       onChange={e => setQuickForm({...quickForm, contact: e.target.value.replace(/\D/g, '')})}
-                      placeholder="017XXXXXXXX (11 digits)" 
-                      className="w-full border rounded-xl px-3 py-2 text-sm font-mono outline-none focus:ring-2 focus:ring-teal-500 mt-1" 
+                      placeholder="017XXXXXXXX" 
+                      className="w-full border rounded-xl px-3 py-2 text-xs font-mono outline-none focus:ring-2 focus:ring-teal-500 mt-1" 
                     />
                   </div>
 
                   <button 
                     type="submit" 
-                    className="w-full bg-[#008080] hover:bg-[#006666] text-white py-3 rounded-xl font-bold text-sm transition shadow-md mt-2"
+                    className="w-full bg-[#008080] hover:bg-[#006666] text-white py-2.5 rounded-xl font-bold text-xs transition shadow-md mt-1"
                   >
                     Confirm Quick Reservation
                   </button>
@@ -925,60 +1083,60 @@ export default function Home() {
         </div>
       )}
 
-      {/* Doctor Booking Modal - Fully Mobile Optimized with Smooth Vertical Scrolling */}
+      {/* Doctor Booking Modal - Mobile Optimized */}
       {isModalOpen && (
-        <div className="fixed inset-0 bg-black/60 backdrop-blur-xs flex items-center justify-center p-3 sm:p-4 z-50 overflow-y-auto">
-          <div className="bg-white rounded-2xl max-w-xl w-full p-5 sm:p-8 shadow-2xl relative my-auto max-h-[92vh] overflow-y-auto animate-in fade-in zoom-in duration-200">
+        <div className="fixed inset-0 bg-black/60 backdrop-blur-xs flex items-center justify-center p-3 z-50 overflow-y-auto">
+          <div className="bg-white rounded-2xl max-w-lg w-full p-4 sm:p-6 shadow-2xl relative my-auto max-h-[92vh] overflow-y-auto">
             <button 
               onClick={() => setIsModalOpen(false)}
-              className="absolute top-4 right-4 text-slate-400 hover:text-slate-600 font-bold text-lg cursor-pointer z-10 bg-slate-100 w-8 h-8 rounded-full flex items-center justify-center"
+              className="absolute top-3 right-3 text-slate-400 hover:text-slate-600 font-bold text-base cursor-pointer z-10 bg-slate-100 w-7 h-7 rounded-full flex items-center justify-center"
             >
               ✕
             </button>
 
             {submitted && bookedData ? (
-              <div className="text-center py-4">
-                <div className="inline-block bg-[#008080] text-white font-black text-sm px-5 py-1.5 rounded-full shadow-xs mb-3 tracking-wide">
+              <div className="text-center py-3">
+                <div className="inline-block bg-[#008080] text-white font-black text-xs px-4 py-1 rounded-full shadow-xs mb-2.5 tracking-wide">
                   Serial: {bookedData.serialNo}
                 </div>
-                <h3 className="text-xl font-bold text-slate-900">Appointment Request Submitted!</h3>
-                <p className="text-xs text-slate-600 mt-1">Your appointment has been registered successfully.</p>
+                <h3 className="text-base sm:text-lg font-bold text-slate-900">Appointment Request Submitted!</h3>
+                <p className="text-[11px] text-slate-600 mt-0.5">Your appointment has been registered successfully.</p>
                 
                 <div 
                   id="printable-slip" 
                   data-serial={bookedData.serialNo}
-                  className="bg-slate-50 border border-slate-200 rounded-xl p-4 mt-4 text-left text-xs space-y-2.5"
+                  className="bg-slate-50 border border-slate-200 rounded-xl p-3 mt-3 text-left text-xs space-y-2"
                 >
-                  <div className="flex justify-between border-b pb-2">
-                    <span className="font-semibold text-slate-600">Patient Name:</span>
-                    <span className="font-bold text-slate-900">{bookedData.name} {bookedData.age ? `(Age: ${bookedData.age})` : ''}</span>
+                  <div className="flex justify-between border-b pb-1.5">
+                    <span className="font-semibold text-slate-600">Patient:</span>
+                    <span className="font-bold text-slate-900">{bookedData.name}</span>
                   </div>
-                  <div className="flex justify-between border-b pb-2">
+                  <div className="flex justify-between border-b pb-1.5">
                     <span className="font-semibold text-slate-600">Phone:</span>
                     <span className="font-mono font-bold text-slate-900">{bookedData.phone}</span>
                   </div>
-                  <div className="flex justify-between border-b pb-2">
-                    <span className="font-semibold text-slate-600">Doctor Name:</span>
+                  <div className="flex justify-between border-b pb-1.5">
+                    <span className="font-semibold text-slate-600">Doctor:</span>
                     <span className="font-bold text-[#008080]">{bookedData.doctorName}</span>
                   </div>
-                  <div className="flex justify-between border-b pb-2">
-                    <span className="font-semibold text-slate-600">Appointment Date:</span>
+                  <div className="flex justify-between border-b pb-1.5">
+                    <span className="font-semibold text-slate-600">Date:</span>
                     <span className="font-bold text-slate-900">{bookedData.booking_date}</span>
                   </div>
-                  <div className="flex justify-between border-b pb-2">
-                    <span className="font-semibold text-slate-600">Serial No:</span>
+                  <div className="flex justify-between border-b pb-1.5">
+                    <span className="font-semibold text-slate-600">Serial:</span>
                     <span className="font-bold text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded border border-emerald-200">{bookedData.serialNo}</span>
                   </div>
                   <div className="flex justify-between items-center">
-                    <span className="font-semibold text-slate-600">Consultation Fee:</span>
+                    <span className="font-semibold text-slate-600">Fee:</span>
                     <span className="font-bold text-slate-900">{bookedData.fee}</span>
                   </div>
                 </div>
 
-                <div className="flex gap-3 mt-6">
+                <div className="flex gap-2 mt-4">
                   <button 
                     onClick={handlePrintSlip}
-                    className="w-full bg-[#008080] hover:bg-[#006666] text-white py-2.5 rounded-xl text-xs font-bold transition shadow-xs flex items-center justify-center gap-2"
+                    className="w-full bg-[#008080] hover:bg-[#006666] text-white py-2 rounded-xl text-xs font-bold transition shadow-xs flex items-center justify-center gap-1.5"
                   >
                     <span>📥</span> Download Printable Slip
                   </button>
@@ -986,11 +1144,11 @@ export default function Home() {
               </div>
             ) : (
               <div>
-                <h3 className="text-lg sm:text-xl font-bold text-slate-900 mb-3 sm:mb-4">Booking Appointment</h3>
-                <form onSubmit={handleBookingSubmit} className="space-y-3">
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <h3 className="text-base sm:text-lg font-bold text-slate-900 mb-3">Booking Appointment</h3>
+                <form onSubmit={handleBookingSubmit} className="space-y-2.5">
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
                     <div>
-                      <label className="text-xs font-bold text-slate-700">Specialization <span className="text-rose-500">*</span></label>
+                      <label className="text-xs font-bold text-slate-700">Specialization *</label>
                       <select 
                         required
                         value={formData.specialization}
@@ -1000,7 +1158,7 @@ export default function Home() {
                           setAvailableDatesForDoc([]);
                           setIsDoctorAbsent(false);
                         }}
-                        className="w-full border rounded-xl px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-teal-500 bg-white mt-1"
+                        className="w-full border rounded-xl px-3 py-2 text-xs outline-none focus:ring-2 focus:ring-teal-500 bg-white mt-1"
                       >
                         <option value="">Select Specialization</option>
                         {specializations.map((spec: any, idx) => (
@@ -1009,12 +1167,12 @@ export default function Home() {
                       </select>
                     </div>
                     <div>
-                      <label className="text-xs font-bold text-slate-700">Select Doctor <span className="text-rose-500">*</span></label>
+                      <label className="text-xs font-bold text-slate-700">Select Doctor *</label>
                       <select 
                         required
                         value={formData.doctor_id}
                         onChange={e => handleDoctorChange(e.target.value)}
-                        className="w-full border rounded-xl px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-teal-500 bg-white mt-1"
+                        className="w-full border rounded-xl px-3 py-2 text-xs outline-none focus:ring-2 focus:ring-teal-500 bg-white mt-1"
                       >
                         <option value="">Select Doctor</option>
                         {filteredDoctors.map((doc, idx) => (
@@ -1027,9 +1185,9 @@ export default function Home() {
                   </div>
 
                   {selectedDoctor && (
-                    <div className={`border rounded-xl p-3 text-xs flex flex-col gap-1.5 transition ${selectedDoctor.status === 'Absent' ? 'bg-rose-50 border-rose-200' : 'bg-teal-50 border-teal-200 text-slate-800'}`}>
-                      <div className="flex items-center gap-3">
-                        <div className="w-14 h-14 rounded-lg overflow-hidden bg-slate-200 flex-shrink-0 border border-teal-200 relative">
+                    <div className={`border rounded-xl p-2.5 text-xs flex flex-col gap-1 transition ${selectedDoctor.status === 'Absent' ? 'bg-rose-50 border-rose-200' : 'bg-teal-50 border-teal-200 text-slate-800'}`}>
+                      <div className="flex items-center gap-2.5">
+                        <div className="w-12 h-12 rounded-lg overflow-hidden bg-slate-200 flex-shrink-0 border border-teal-200 relative">
                           <img 
                             src={selectedDoctor.image_url || `/doctors/doctor-${selectedDoctor.doctor_no || 1}.png`} 
                             alt={selectedDoctor.name} 
@@ -1039,53 +1197,41 @@ export default function Home() {
                         </div>
                         <div className="flex-1">
                           <div className="flex justify-between items-start">
-                            <p className="font-bold text-slate-900 text-sm">{selectedDoctor.name}</p>
-                            <span className={`px-2 py-0.5 rounded text-[10px] font-extrabold ${selectedDoctor.status === 'Absent' ? 'bg-rose-600 text-white' : 'bg-emerald-600 text-white'}`}>
+                            <p className="font-bold text-slate-900 text-xs">{selectedDoctor.name}</p>
+                            <span className={`px-1.5 py-0.5 rounded text-[9px] font-extrabold ${selectedDoctor.status === 'Absent' ? 'bg-rose-600 text-white' : 'bg-emerald-600 text-white'}`}>
                               {selectedDoctor.status || 'Present'}
                             </span>
                           </div>
-                          <p className="text-slate-700 font-semibold">{selectedDoctor.degree}</p>
-                          <p className="text-slate-600 text-[11px] mt-0.5 italic">{selectedDoctor.details || selectedDoctor.branch}</p>
+                          <p className="text-slate-700 text-[11px] font-semibold">{selectedDoctor.degree}</p>
                         </div>
                       </div>
 
-                      <div className="flex flex-col gap-0.5 mt-1 pt-2 border-t border-slate-200 text-[11px] font-bold text-[#008080]">
-                        <span>Days: {selectedDoctor.days?.join(', ') || 'Available on scheduled dates'}</span>
+                      <div className="flex flex-col gap-0.5 mt-1 pt-1 border-t border-slate-200 text-[10px] font-bold text-[#008080]">
+                        <span>Days: {parseDoctorDaysArray(selectedDoctor.days).join(', ') || 'Scheduled'}</span>
                         <span>Sitting Hours: {selectedDoctor.sitting_hours}</span>
+                        <span className="text-slate-800">Fee: {selectedDoctor.fee || selectedDoctor.follow_up_fee || '500 BDT'}</span>
                       </div>
-
-                      <div className="text-right">
-                        <span className="bg-[#008080] text-white px-2 py-0.5 rounded text-[10px] font-extrabold">
-                          Fee: {selectedDoctor.fee || selectedDoctor.follow_up_fee || '500 BDT'}
-                        </span>
-                      </div>
-
-                      {selectedDoctor.status === 'Absent' && (
-                        <div className="bg-rose-100 text-rose-700 font-bold px-3 py-1.5 rounded-lg text-xs mt-1 border border-rose-300">
-                          ⚠️ Doctor is currently ABSENT. Appointments cannot be placed today.
-                        </div>
-                      )}
                     </div>
                   )}
 
                   <div>
-                    <label className="text-xs font-bold text-slate-700 block mb-1">Select Date (Next 3 Available Days) <span className="text-rose-500">*</span></label>
+                    <label className="text-xs font-bold text-slate-700 block mb-1">Select Date (Next 3 Available Days) *</label>
                     {selectedDoctor?.status === 'Absent' ? (
-                      <p className="text-xs text-rose-600 font-bold bg-rose-50 p-2.5 rounded-xl border border-rose-200">
-                        ⚠️ Booking is closed because doctor is marked as ABSENT.
+                      <p className="text-[11px] text-rose-600 font-bold bg-rose-50 p-2 rounded-xl border border-rose-200">
+                        ⚠️ Doctor is ABSENT today.
                       </p>
                     ) : availableDatesForDoc.length === 0 ? (
-                      <p className="text-xs text-rose-600 font-bold bg-rose-50 p-2.5 rounded-xl border border-rose-200">
-                        {selectedDoctor ? "⚠️ No available dates found for this doctor." : "Please select a doctor first to view available dates."}
+                      <p className="text-[11px] text-rose-600 font-bold bg-rose-50 p-2 rounded-xl border border-rose-200">
+                        {selectedDoctor ? "⚠️ No available dates found." : "Select a doctor first."}
                       </p>
                     ) : (
-                      <div className="grid grid-cols-3 gap-2">
+                      <div className="grid grid-cols-3 gap-1.5">
                         {availableDatesForDoc.map((item, idx) => (
                           <button
                             type="button"
                             key={idx}
                             onClick={() => setFormData({...formData, booking_date: item.dateStr})}
-                            className={`p-2.5 rounded-xl text-xs font-semibold border transition text-center ${formData.booking_date === item.dateStr ? 'bg-[#008080] text-white border-[#008080] shadow-xs' : 'bg-slate-50 text-slate-700 border-slate-200 hover:bg-slate-100'}`}
+                            className={`p-2 rounded-xl text-[11px] font-semibold border transition text-center ${formData.booking_date === item.dateStr ? 'bg-[#008080] text-white border-[#008080]' : 'bg-slate-50 text-slate-700 border-slate-200'}`}
                           >
                             {item.display}
                           </button>
@@ -1094,20 +1240,20 @@ export default function Home() {
                     )}
                   </div>
 
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
                     <div>
-                      <label className="text-xs font-bold text-slate-700">Your Name <span className="text-rose-500">*</span></label>
+                      <label className="text-xs font-bold text-slate-700">Your Name *</label>
                       <input 
                         type="text" 
                         required 
                         value={formData.name} 
                         onChange={e => setFormData({...formData, name: e.target.value})}
                         placeholder="Full Name" 
-                        className="w-full border rounded-xl px-3 py-2 text-sm text-slate-900 outline-none focus:ring-2 focus:ring-teal-500 mt-1" 
+                        className="w-full border rounded-xl px-3 py-2 text-xs text-slate-900 outline-none focus:ring-2 focus:ring-teal-500 mt-1" 
                       />
                     </div>
                     <div>
-                      <label className="text-xs font-bold text-slate-700">Your Number <span className="text-rose-500">*</span></label>
+                      <label className="text-xs font-bold text-slate-700">Your Number *</label>
                       <input 
                         type="tel" 
                         required 
@@ -1115,13 +1261,13 @@ export default function Home() {
                         minLength={11}
                         value={formData.phone} 
                         onChange={e => setFormData({...formData, phone: e.target.value.replace(/\D/g, '')})}
-                        placeholder="017XXXXXXXX (11 digits)" 
-                        className="w-full border rounded-xl px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-teal-500 mt-1 font-mono" 
+                        placeholder="017XXXXXXXX" 
+                        className="w-full border rounded-xl px-3 py-2 text-xs outline-none focus:ring-2 focus:ring-teal-500 mt-1 font-mono" 
                       />
                     </div>
                   </div>
 
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
                     <div>
                       <label className="text-xs font-bold text-slate-700">Age</label>
                       <input 
@@ -1129,7 +1275,7 @@ export default function Home() {
                         value={formData.age} 
                         onChange={e => setFormData({...formData, age: e.target.value})}
                         placeholder="Age" 
-                        className="w-full border rounded-xl px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-teal-500 mt-1" 
+                        className="w-full border rounded-xl px-3 py-2 text-xs outline-none focus:ring-2 focus:ring-teal-500 mt-1" 
                       />
                     </div>
                     <div>
@@ -1139,7 +1285,7 @@ export default function Home() {
                         value={formData.note} 
                         onChange={e => setFormData({...formData, note: e.target.value})}
                         placeholder="Add a note..." 
-                        className="w-full border rounded-xl px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-teal-500 mt-1" 
+                        className="w-full border rounded-xl px-3 py-2 text-xs outline-none focus:ring-2 focus:ring-teal-500 mt-1" 
                       />
                     </div>
                   </div>
@@ -1147,9 +1293,9 @@ export default function Home() {
                   <button 
                     type="submit" 
                     disabled={isDoctorAbsent || selectedDoctor?.status === 'Absent' || availableDatesForDoc.length === 0}
-                    className={`w-full py-2.5 rounded-xl font-bold text-sm transition mt-2 ${isDoctorAbsent || selectedDoctor?.status === 'Absent' || availableDatesForDoc.length === 0 ? 'bg-slate-300 text-slate-500 cursor-not-allowed' : 'bg-[#008080] hover:bg-[#006666] text-white'}`}
+                    className={`w-full py-2.5 rounded-xl font-bold text-xs transition mt-1 ${isDoctorAbsent || selectedDoctor?.status === 'Absent' || availableDatesForDoc.length === 0 ? 'bg-slate-300 text-slate-500 cursor-not-allowed' : 'bg-[#008080] hover:bg-[#006666] text-white'}`}
                   >
-                    {selectedDoctor?.status === 'Absent' ? 'Doctor Absent (Appointment Closed)' : isDoctorAbsent || availableDatesForDoc.length === 0 ? 'Doctor Unavailable' : 'Submit Appointment'}
+                    {selectedDoctor?.status === 'Absent' ? 'Appointment Closed (Absent)' : 'Submit Appointment'}
                   </button>
                 </form>
               </div>
