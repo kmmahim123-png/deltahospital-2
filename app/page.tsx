@@ -591,7 +591,7 @@ export default function Home() {
       `}</style>
       
       {/* Floating Always-Visible Hotline Button */}
-      <div className="fixed bottom-5 right-5 z-50 flex items-center shadow-2xl rounded-full bg-[#008080] text-white border-2 border-white animate-bounce">
+      <div className="fixed bottom-5 right-5 z-40 flex items-center shadow-2xl rounded-full bg-[#008080] text-white border-2 border-white animate-bounce">
         <a href="tel:09666720320" className="flex items-center gap-2 py-2.5 px-4 rounded-full hover:bg-[#006666] transition cursor-pointer">
           <span className="text-lg">📞</span>
           <span className="text-xs sm:text-sm font-black font-mono tracking-wide">09666720320</span>
@@ -611,7 +611,7 @@ export default function Home() {
                 ডেলটা হেলথ্ কেয়ার যাত্রাবাড়ী লিমিটেড
               </h2>
               <div className="w-full border-b-[2px] border-[#007b7b] my-0.5"></div>
-              <h1 className="text-[11px] sm:text-xs font-black text-rose-600 tracking-wider leading-tight whitespace-nowrap">
+              <h1 className="text-[11px] sm:text-xs font-black text-rose-600 tracking-normal leading-tight whitespace-nowrap">
                 DELTA HEALTH CARE JATRABARI LIMITED
               </h1>
             </div>
@@ -627,8 +627,8 @@ export default function Home() {
           </div>
         </header>
 
-        {/* 2nd Row: Sticky Action Buttons Bar (Fixed position with high z-index to stay 100% visible on scroll) */}
-        <div className="sticky top-0 z-[9999] bg-white/95 backdrop-blur-md shadow-md border-b border-slate-200 w-full py-2.5 px-3 sm:px-12 flex items-center justify-between">
+        {/* 2nd Row: Action Buttons Bar - Fixed Sticky Navbar */}
+        <div className="sticky top-0 z-40 bg-white/95 backdrop-blur-md shadow-md border-b border-slate-200 w-full py-2.5 px-3 sm:px-12 flex items-center justify-between">
           <div className="flex items-center gap-2 sm:gap-3 text-xs font-bold w-full overflow-x-auto scrollbar-hide py-1">
             <a href="#home-service" className="border border-rose-500 text-rose-600 hover:bg-rose-600 hover:text-white px-3.5 py-1.5 rounded-full text-[11px] sm:text-xs font-black transition uppercase flex items-center gap-1 shadow-xs cursor-pointer bg-rose-50/50 whitespace-nowrap flex-shrink-0">
               Home Service
