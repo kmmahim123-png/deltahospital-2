@@ -5,7 +5,6 @@ import { supabase } from '@/lib/supabase'
 import { sharedDoctors } from '@/lib/doctors'
 
 export default function AdminPanel() {
-  // এখানে সিকিউরিটি কড়া করা হলো: ডিফল্ট false থাকবে, পাসওয়ার্ড ছাড়া কেউ ঢুকতে পারবে না
   const [isAuthenticated, setIsAuthenticated] = useState(false)
   const [passwordInput, setPasswordInput] = useState('')
   const [showPassword, setShowPassword] = useState(false)
@@ -89,18 +88,23 @@ export default function AdminPanel() {
     return `${year}-${month}-${day}`
   }
 
-  const generateInvoiceNumber = () => {
-    const randomDigits = Math.floor(1000 + Math.random() * 9000)
-    return `INV-${randomDigits}`
-  }
-
   const [labForm, setLabForm] = useState({
-    invoice_no: '', patient_name: '', phone: '', age: '', gender: 'Male',
-    test_name: '', referred_by: 'Self', test_date: '', delivery_status: 'Ready',
-    payment_status: 'Paid', amount: '500 BDT', report_summary: '', file_url: '', file_name: ''
+    invoice_no: '',
+    patient_name: '',
+    phone: '',
+    age: '',
+    gender: 'Male',
+    test_name: '',
+    referred_by: 'Self',
+    test_date: '',
+    delivery_status: 'Ready',
+    payment_status: 'Paid',
+    amount: '500 BDT',
+    report_summary: '',
+    file_url: '',
+    file_name: ''
   })
 
-  // ব্রাউজার সেশন চেক: যদি আগে লগইন করা থাকে তবেই সেশন রাখবে
   useEffect(() => {
     const authStatus = localStorage.getItem('delta_admin_auth')
     if (authStatus === 'true') {
@@ -122,7 +126,7 @@ export default function AdminPanel() {
       setIsAuthenticated(true)
       localStorage.setItem('delta_admin_auth', 'true')
     } else {
-      alert('Incorrect Password! Try "delta123"')
+      alert('Incorrect Password!')
     }
   }
 
@@ -228,6 +232,25 @@ export default function AdminPanel() {
     }
   }
 
+  // ১ ক্লিকে ডাক্তারের Present / Absent স্ট্যাটাস পরিবর্তন করার ফাংশন
+  const handleToggleDoctorStatus = async (doc: any) => {
+    const nextStatus = doc.status === 'Absent' ? 'Present' : 'Absent'
+    try {
+      const { error } = await supabase
+        .from('doctors')
+        .update({ status: nextStatus, status_updated_at: new Date().toISOString() })
+        .eq('id', doc.id)
+
+      if (error) throw error
+
+      setDoctors(prev =>
+        prev.map(item => (item.id === doc.id ? { ...item, status: nextStatus } : item))
+      )
+    } catch (err: any) {
+      alert('Failed to update status: ' + err.message)
+    }
+  }
+
   async function fetchLabReports() {
     try {
       const { data, error } = await supabase
@@ -246,7 +269,7 @@ export default function AdminPanel() {
     setIsLabEditMode(false)
     setCurrentLabId(null)
     setLabForm({
-      invoice_no: generateInvoiceNumber(),
+      invoice_no: '', // একদম খালি রাখা হলো যাতে স্লিপ দেখে অ্যাডমিন নিজে বসাতে পারে
       patient_name: '',
       phone: '',
       age: '',
@@ -267,7 +290,7 @@ export default function AdminPanel() {
     setIsLabEditMode(true)
     setCurrentLabId(report.id)
     setLabForm({
-      invoice_no: report.invoice_no || generateInvoiceNumber(),
+      invoice_no: report.invoice_no || '',
       patient_name: report.patient_name || '',
       phone: report.phone || '',
       age: report.age || '',
@@ -305,6 +328,10 @@ export default function AdminPanel() {
 
   const handleSaveLabReport = async (e: React.FormEvent) => {
     e.preventDefault()
+    if (!labForm.invoice_no.trim()) {
+      alert('Please enter the Bill / Invoice Number.')
+      return
+    }
     if (labForm.phone.length !== 11) {
       alert('Patient phone number must be exactly 11 digits.')
       return
@@ -312,7 +339,7 @@ export default function AdminPanel() {
     setSavingLab(true)
     try {
       const payload = {
-        invoice_no: labForm.invoice_no.trim().toUpperCase(),
+        invoice_no: labForm.invoice_no.trim(),
         patient_name: labForm.patient_name.trim(),
         phone: labForm.phone.trim(),
         age: labForm.age,
@@ -338,7 +365,7 @@ export default function AdminPanel() {
 
       if (sendSmsOnLabSave && payload.delivery_status === 'Ready') {
         try {
-          const smsMsg = `Delta Health Care Jatrabari Ltd.\nDear ${payload.patient_name}, your lab report for '${payload.test_name}' (Invoice: ${payload.invoice_no}) is READY. You can download it from our website using your Invoice or Phone number.\nHotline: 09666720320`
+          const smsMsg = `Delta Health Care Jatrabari Ltd.\nDear ${payload.patient_name}, your lab report for '${payload.test_name}' (Bill No: ${payload.invoice_no}) is READY. You can download it from our website.\nHotline: 09666720320`
           await fetch('https://client.giosms.com/api/v1/send', {
             method: 'POST',
             headers: {
@@ -424,7 +451,7 @@ export default function AdminPanel() {
               <p class="addr">169/1-B, West Dholaipar, Jatrabari, Dhaka | Hotline: 09666720320</p>
             </div>
             <div style="text-align: right;">
-              <div style="font-size: 16px; font-weight: 900; color: #008080;">${report.invoice_no}</div>
+              <div style="font-size: 16px; font-weight: 900; color: #008080;">Bill / Invoice: ${report.invoice_no}</div>
               <div style="font-size: 11px; color: #64748b;">Date: ${report.test_date}</div>
               <div style="font-size: 11px; font-weight: 700; color: #059669;">Status: ${report.delivery_status}</div>
             </div>
@@ -500,7 +527,7 @@ export default function AdminPanel() {
       setSelectedAdminDoctor(doc)
       const validDates = getTop3AvailableDates(doc.days)
       setAvailableDatesForAdminDoc(validDates)
-      if (validDates.length > 0) {
+      if (validDates.length > 0 && doc.status !== 'Absent') {
         setAdminBooking(prev => ({ ...prev, booking_date: validDates[0].dateStr }))
         setIsAdminDoctorAbsent(false)
       } else {
@@ -873,6 +900,18 @@ export default function AdminPanel() {
     return true
   })
 
+  // এই ভেরিয়েবলটি যুক্ত করা হয়েছে যাতে Lab & Reports ট্যাবে আর কোনো Runtime Error না আসে
+  const filteredLabReports = labReports.filter(rep => {
+    const matchesStatus = labFilterStatus === 'All' ? true : rep.delivery_status === labFilterStatus
+    const q = labSearchQuery.trim().toLowerCase()
+    const matchesQuery = !q
+      || rep.invoice_no?.toLowerCase().includes(q)
+      || rep.patient_name?.toLowerCase().includes(q)
+      || rep.phone?.toLowerCase().includes(q)
+      || rep.test_name?.toLowerCase().includes(q)
+    return matchesStatus && matchesQuery
+  })
+
   if (!isAuthenticated) {
     return (
       <div className="min-h-screen bg-slate-100 flex items-center justify-center p-4">
@@ -979,7 +1018,7 @@ export default function AdminPanel() {
             onClick={() => setActiveTab('lab-reports')}
             className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl font-bold text-sm transition ${activeTab === 'lab-reports' ? 'bg-[#008080] text-white shadow-sm' : 'text-slate-600 hover:bg-slate-50'}`}
           >
-            <span>🧪</span> Lab & Reports
+            <span>🧪</span> Lab & Reports ({labReports.length})
           </button>
         </aside>
 
@@ -988,7 +1027,10 @@ export default function AdminPanel() {
           {activeTab === 'doctors' && (
             <div>
               <div className="flex justify-between items-center mb-6">
-                <h2 className="text-xl font-black text-slate-900">Doctor List ({doctors.length})</h2>
+                <div>
+                  <h2 className="text-xl font-black text-slate-900">Doctor List ({doctors.length})</h2>
+                  <p className="text-xs text-slate-500">Click on Present / Absent badge to toggle doctor availability</p>
+                </div>
                 <button 
                   onClick={() => { resetDocForm(); setIsAddModalOpen(true) }}
                   className="bg-[#008080] hover:bg-[#006666] text-white px-4 py-2 rounded-xl font-bold text-sm transition shadow-sm flex items-center gap-2"
@@ -1004,7 +1046,9 @@ export default function AdminPanel() {
                       <th className="p-3">NO</th>
                       <th className="p-3">Doctor Name & Picture</th>
                       <th className="p-3">Specialization</th>
-                      <th className="p-3">Status</th>
+                      <th className="p-3">Schedule Days</th>
+                      <th className="p-3">Fee</th>
+                      <th className="p-3">Status (Click to Change)</th>
                       <th className="p-3 text-right">Action</th>
                     </tr>
                   </thead>
@@ -1019,13 +1063,27 @@ export default function AdminPanel() {
                             onError={(e: any) => { e.target.src = "/doctors/doctor-1.png" }}
                             className="w-10 h-10 rounded-full object-cover border object-top" 
                           />
-                          <span className="font-bold text-slate-900">{doc.name}</span>
+                          <div>
+                            <div className="font-bold text-slate-900">{doc.name}</div>
+                            <div className="text-xs text-slate-500">{doc.degree}</div>
+                          </div>
                         </td>
                         <td className="p-3 text-slate-600 font-semibold">{doc.specialization}</td>
+                        <td className="p-3 text-xs text-slate-600">{parseDoctorDaysArray(doc.days).join(', ')}</td>
+                        <td className="p-3 text-xs font-bold text-slate-800">{doc.follow_up_fee || doc.fee || '600 BDT'}</td>
                         <td className="p-3">
-                          <span className="px-2.5 py-1 rounded-md text-xs font-bold bg-sky-100 text-sky-700">
-                            {doc.status || 'Present'}
-                          </span>
+                          <button
+                            type="button"
+                            onClick={() => handleToggleDoctorStatus(doc)}
+                            title="Click to switch between Present & Absent"
+                            className={`px-3 py-1 rounded-full text-xs font-extrabold transition cursor-pointer shadow-xs ${
+                              doc.status === 'Absent'
+                                ? 'bg-rose-600 text-white hover:bg-rose-700'
+                                : 'bg-emerald-100 text-emerald-700 hover:bg-emerald-200'
+                            }`}
+                          >
+                            {doc.status === 'Absent' ? '🔴 Absent' : '🟢 Present'}
+                          </button>
                         </td>
                         <td className="p-3 text-right space-x-2">
                           <button 
@@ -1091,7 +1149,7 @@ export default function AdminPanel() {
                       onChange={e => setFilterDateMode(e.target.value)}
                       className="w-full border rounded-lg px-3 py-1.5 text-xs bg-white font-medium"
                     >
-                      <option value="all">All Dates (Aksathe)</option>
+                      <option value="all">All Dates</option>
                       {getNext7Days().map(dateStr => (
                         <option key={dateStr} value={dateStr}>{dateStr}</option>
                       ))}
@@ -1167,7 +1225,7 @@ export default function AdminPanel() {
 
           {activeTab === 'booking' && (
             <div className="max-w-xl mx-auto">
-              <h2 className="text-xl font-black text-slate-900 mb-4">Book Appointment (Main Page Style)</h2>
+              <h2 className="text-xl font-black text-slate-900 mb-4">Book Appointment</h2>
               {bookingSubmitted ? (
                 <div className="text-center py-8">
                   <div className="w-16 h-16 bg-emerald-100 text-emerald-600 rounded-full flex items-center justify-center mx-auto text-3xl mb-4 font-bold">✓</div>
@@ -1266,7 +1324,7 @@ export default function AdminPanel() {
                         maxLength={11}
                         value={adminBooking.phone}
                         onChange={e => setAdminBooking({...adminBooking, phone: e.target.value.replace(/\D/g, '')})}
-                        placeholder="017XXXXXXXX" 
+                        placeholder="11 Digit Mobile Number" 
                         className="w-full border rounded-xl px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-teal-500 mt-1 font-mono" 
                       />
                     </div>
@@ -1366,7 +1424,7 @@ export default function AdminPanel() {
                         maxLength={11}
                         value={quickForm.contact} 
                         onChange={e => setQuickForm({...quickForm, contact: e.target.value.replace(/\D/g, '')})}
-                        placeholder="017XXXXXXXX" 
+                        placeholder="11 Digit Mobile Number" 
                         className="w-full border rounded-xl px-3 py-2 text-sm font-mono outline-none focus:ring-2 focus:ring-teal-500 mt-1" 
                       />
                     </div>
@@ -1424,12 +1482,12 @@ export default function AdminPanel() {
 
               <div className="bg-slate-50 p-4 rounded-xl border border-slate-200 mb-6 flex flex-wrap gap-3 items-center">
                 <div className="flex-1 min-w-[220px]">
-                  <label className="text-[11px] font-bold text-slate-600 block mb-1">Search by Invoice, Patient Name or Phone</label>
+                  <label className="text-[11px] font-bold text-slate-600 block mb-1">Search by Bill / Invoice No, Patient Name or Phone</label>
                   <input 
                     type="text"
                     value={labSearchQuery}
                     onChange={e => setLabSearchQuery(e.target.value)}
-                    placeholder="Search INV-XXXX, Name, or 017XXXXXXXX..."
+                    placeholder="Search by Bill No, Patient Name, or Phone..."
                     className="w-full border rounded-lg px-3 py-1.5 text-xs bg-white outline-none focus:ring-2 focus:ring-teal-500"
                   />
                 </div>
@@ -1459,7 +1517,7 @@ export default function AdminPanel() {
                   <table className="w-full text-left border-collapse">
                     <thead>
                       <tr className="border-b text-xs font-bold text-slate-600 bg-slate-50">
-                        <th className="p-3">Invoice ID</th>
+                        <th className="p-3">Bill / Invoice No</th>
                         <th className="p-3">Patient Info</th>
                         <th className="p-3">Test / Investigation</th>
                         <th className="p-3">Date</th>
@@ -1544,24 +1602,25 @@ export default function AdminPanel() {
         </main>
       </div>
 
+      {/* Lab Report Modal (Completely Blank Bill / Invoice No Input without any example numbers) */}
       {isLabModalOpen && (
         <div className="fixed inset-0 bg-black/50 backdrop-blur-xs flex items-center justify-center p-4 z-50 overflow-y-auto">
           <div className="bg-white rounded-2xl max-w-2xl w-full p-6 sm:p-8 shadow-2xl relative max-h-[92vh] overflow-y-auto">
             <button onClick={() => setIsLabModalOpen(false)} className="absolute top-4 right-4 text-slate-400 hover:text-slate-600 font-bold text-lg">✕</button>
             <h3 className="text-xl font-black text-slate-900 mb-1">{isLabEditMode ? 'Edit Diagnostic Lab Report' : 'Create / Upload New Lab Report'}</h3>
-            <p className="text-xs text-slate-500 mb-4">Patients can immediately download Ready reports from the website using their Invoice ID or Phone Number.</p>
+            <p className="text-xs text-slate-500 mb-4">Patients can immediately download Ready reports from the website using their Bill / Invoice Number or Phone Number.</p>
 
             <form onSubmit={handleSaveLabReport} className="space-y-4">
               <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
                 <div>
-                  <label className="text-xs font-bold text-slate-700">Invoice / Report ID *</label>
+                  <label className="text-xs font-bold text-slate-700">Bill / Invoice Number *</label>
                   <input 
                     type="text" 
                     required 
                     value={labForm.invoice_no} 
                     onChange={e => setLabForm({...labForm, invoice_no: e.target.value})}
-                    placeholder="INV-1001" 
-                    className="w-full border rounded-xl px-3 py-2 text-sm font-mono font-bold text-[#008080] bg-teal-50/50 mt-1" 
+                    placeholder="Enter Bill / Invoice No" 
+                    className="w-full border rounded-xl px-3 py-2 text-sm font-mono font-bold text-[#008080] bg-white mt-1 outline-none focus:ring-2 focus:ring-teal-500" 
                   />
                 </div>
                 <div>
@@ -1583,7 +1642,7 @@ export default function AdminPanel() {
                     maxLength={11}
                     value={labForm.phone} 
                     onChange={e => setLabForm({...labForm, phone: e.target.value.replace(/\D/g, '')})}
-                    placeholder="017XXXXXXXX" 
+                    placeholder="Mobile Number" 
                     className="w-full border rounded-xl px-3 py-2 text-sm font-mono mt-1" 
                   />
                 </div>
@@ -1596,7 +1655,7 @@ export default function AdminPanel() {
                     type="number" 
                     value={labForm.age} 
                     onChange={e => setLabForm({...labForm, age: e.target.value})}
-                    placeholder="e.g. 32" 
+                    placeholder="Age" 
                     className="w-full border rounded-xl px-3 py-2 text-sm mt-1" 
                   />
                 </div>
@@ -1645,7 +1704,7 @@ export default function AdminPanel() {
                     list="common-lab-tests"
                     value={labForm.test_name} 
                     onChange={e => setLabForm({...labForm, test_name: e.target.value})}
-                    placeholder="Type or select test (e.g. CBC, Lipid Profile)" 
+                    placeholder="Type or select test" 
                     className="w-full border rounded-xl px-3 py-2 text-sm mt-1" 
                   />
                   <datalist id="common-lab-tests">
@@ -1660,7 +1719,7 @@ export default function AdminPanel() {
                       type="text" 
                       value={labForm.amount} 
                       onChange={e => setLabForm({...labForm, amount: e.target.value})}
-                      placeholder="500 BDT" 
+                      placeholder="Amount" 
                       className="w-full border rounded-xl px-2.5 py-2 text-xs mt-1" 
                     />
                   </div>
@@ -1753,7 +1812,7 @@ export default function AdminPanel() {
                 </div>
                 <div>
                   <label className="text-xs font-bold text-slate-700">Doctor No (ID)</label>
-                  <input type="text" value={docForm.doctor_no} onChange={e => setDocForm({...docForm, doctor_no: e.target.value})} placeholder="1" className="w-full border rounded-xl px-3 py-2 text-sm mt-1 bg-slate-50" />
+                  <input type="text" value={docForm.doctor_no} onChange={e => setDocForm({...docForm, doctor_no: e.target.value})} placeholder="ID" className="w-full border rounded-xl px-3 py-2 text-sm mt-1 bg-slate-50" />
                 </div>
               </div>
 
@@ -1764,7 +1823,7 @@ export default function AdminPanel() {
                 </div>
                 <div>
                   <label className="text-xs font-bold text-slate-700">Phone Number</label>
-                  <input type="text" value={docForm.phone} onChange={e => setDocForm({...docForm, phone: e.target.value})} placeholder="01700-000000" className="w-full border rounded-xl px-3 py-2 text-sm mt-1" />
+                  <input type="text" value={docForm.phone} onChange={e => setDocForm({...docForm, phone: e.target.value})} placeholder="Mobile Number" className="w-full border rounded-xl px-3 py-2 text-sm mt-1" />
                 </div>
               </div>
 
@@ -1780,7 +1839,7 @@ export default function AdminPanel() {
                 </div>
                 <div>
                   <label className="text-xs font-bold text-slate-700">Follow Up Fee</label>
-                  <input type="text" value={docForm.follow_up_fee} onChange={e => setDocForm({...docForm, follow_up_fee: e.target.value})} placeholder="600 BDT" className="w-full border rounded-xl px-3 py-2 text-sm mt-1" />
+                  <input type="text" value={docForm.follow_up_fee} onChange={e => setDocForm({...docForm, follow_up_fee: e.target.value})} placeholder="Fee" className="w-full border rounded-xl px-3 py-2 text-sm mt-1" />
                 </div>
               </div>
 

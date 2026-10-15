@@ -147,7 +147,7 @@ export default function Home() {
 
   const getDoctorBadge = (days: any, status: string) => {
     if (status === 'Absent') {
-      return <span className="absolute top-3 left-3 bg-rose-600 text-white text-[10px] font-bold px-2.5 py-1 rounded-md shadow z-10">Absent</span>
+      return <span className="absolute top-3 left-3 bg-rose-600 text-white text-[10px] font-bold px-2.5 py-1 rounded-md shadow z-20">Absent</span>
     }
 
     const cleanDays = parseDoctorDaysArray(days).map(d => d.toLowerCase())
@@ -158,9 +158,9 @@ export default function Home() {
     const tomorrowName = tomorrowObj.toLocaleDateString('en-US', { weekday: 'long' }).toLowerCase()
 
     if (cleanDays.some(d => d.includes(todayName) || todayName.includes(d))) {
-      return <span className="absolute top-3 left-3 bg-emerald-600 text-white text-[10px] font-bold px-2.5 py-1 rounded-md shadow z-10">Today</span>
+      return <span className="absolute top-3 left-3 bg-emerald-600 text-white text-[10px] font-bold px-2.5 py-1 rounded-md shadow z-20">Today</span>
     } else if (cleanDays.some(d => d.includes(tomorrowName) || tomorrowName.includes(d))) {
-      return <span className="absolute top-3 left-3 bg-purple-600 text-white text-[10px] font-bold px-2.5 py-1 rounded-md shadow z-10">Tomorrow</span>
+      return <span className="absolute top-3 left-3 bg-purple-600 text-white text-[10px] font-bold px-2.5 py-1 rounded-md shadow z-20">Tomorrow</span>
     }
     return null
   }
@@ -386,7 +386,7 @@ export default function Home() {
     e.preventDefault()
     const query = reportInvoice.trim()
     if (!query) {
-      alert('Please enter your Invoice Number (e.g. INV-1001), Serial Number, or Phone Number')
+      alert('Please enter your Bill / Invoice Number or Phone Number')
       return
     }
     setSearchingReport(true)
@@ -463,7 +463,7 @@ export default function Home() {
               <p class="addr">169/1-B, West Dholaipar, Jatrabari, Dhaka | Hotline: 09666720320</p>
             </div>
             <div style="text-align: right;">
-              <div style="font-size: 16px; font-weight: 900; color: #008080;">${report.invoice_no}</div>
+              <div style="font-size: 16px; font-weight: 900; color: #008080;">Bill / Invoice: ${report.invoice_no}</div>
               <div style="font-size: 11px; color: #64748b;">Date: ${report.test_date}</div>
               <div style="font-size: 11px; font-weight: 700; color: #059669;">Status: ${report.delivery_status}</div>
             </div>
@@ -588,10 +588,20 @@ export default function Home() {
           animation: spin3d 6s linear infinite;
           transform-style: preserve-3d;
         }
+        .angled-doctor-frame {
+          transform: perspective(650px) rotateY(-14deg) skewY(-2.5deg);
+          border: 2.5px solid #5b21b6;
+          box-shadow: 8px 10px 22px rgba(0, 128, 128, 0.16);
+          transition: all 0.35s ease;
+        }
+        .group:hover .angled-doctor-frame,
+        .angled-doctor-frame:hover {
+          transform: perspective(650px) rotateY(-5deg) skewY(-1deg) scale(1.02);
+        }
       `}</style>
       
       {/* Floating Always-Visible Hotline Button */}
-      <div className="fixed bottom-5 right-5 z-40 flex items-center shadow-2xl rounded-full bg-[#008080] text-white border-2 border-white animate-bounce">
+      <div className="fixed bottom-5 right-5 z-30 flex items-center shadow-2xl rounded-full bg-[#008080] text-white border-2 border-white animate-bounce">
         <a href="tel:09666720320" className="flex items-center gap-2 py-2.5 px-4 rounded-full hover:bg-[#006666] transition cursor-pointer">
           <span className="text-lg">📞</span>
           <span className="text-xs sm:text-sm font-black font-mono tracking-wide">09666720320</span>
@@ -599,19 +609,19 @@ export default function Home() {
       </div>
 
       <div className="w-full">
-        {/* Top Header */}
-        <header className="bg-gradient-to-r from-teal-50/90 via-white to-teal-50/90 text-slate-800 py-3.5 px-4 sm:px-12 flex flex-row justify-between items-center gap-3 shadow-sm w-full border-b border-teal-100">
-          <div className="flex items-center gap-3">
-            <div className="w-11 h-11 sm:w-14 sm:h-14 flex items-center justify-center bg-white rounded-2xl p-1.5 shadow-sm border border-teal-200 flex-shrink-0">
+        {/* Top Header - Exact Equal Width for Bangla & English on both Mobile and Laptop */}
+        <header className="bg-gradient-to-r from-teal-50/90 via-white to-teal-50/90 text-slate-800 py-3.5 px-3 sm:px-12 flex flex-row justify-between items-center gap-2 border-b border-teal-100 shadow-xs w-full">
+          <div className="flex items-center gap-2.5 sm:gap-3.5">
+            <div className="w-10 h-10 sm:w-12 sm:h-12 flex items-center justify-center bg-white rounded-full p-1.5 shadow-xs border border-teal-200 flex-shrink-0">
               <img src="/logo.png" alt="Logo" className="w-full h-full object-contain animate-3d-spin" onError={(e: any) => { e.target.src = "https://cdn-icons-png.flaticon.com/512/3774/3774299.png"; }} />
             </div>
             
-            <div className="flex flex-col justify-center">
-              <h2 className="text-xs sm:text-base font-black text-[#007b7b] leading-tight tracking-tight whitespace-nowrap">
+            <div className="inline-flex flex-col justify-center">
+              <h2 className="text-[13px] sm:text-[15.5px] font-black text-[#007b7b] leading-tight tracking-normal whitespace-nowrap">
                 ডেলটা হেলথ্ কেয়ার যাত্রাবাড়ী লিমিটেড
               </h2>
-              <div className="w-full border-b-[2px] border-[#007b7b] my-0.5"></div>
-              <h1 className="text-[11px] sm:text-xs font-black text-rose-600 tracking-normal leading-tight whitespace-nowrap">
+              <div className="w-full border-b-[1.5px] border-[#007b7b] my-0.5"></div>
+              <h1 className="text-[8.8px] sm:text-[10.5px] font-extrabold text-rose-600 tracking-[0.065em] sm:tracking-[0.075em] leading-tight whitespace-nowrap">
                 DELTA HEALTH CARE JATRABARI LIMITED
               </h1>
             </div>
@@ -620,55 +630,51 @@ export default function Home() {
           <div className="flex items-center flex-shrink-0">
             <button 
               onClick={handleSecretAdminAccess}
-              className="bg-[#008080] hover:bg-[#006666] text-white px-5 py-2 rounded-xl text-xs font-extrabold transition shadow-sm cursor-pointer"
+              className="bg-[#008080] hover:bg-[#006666] text-white px-4 sm:px-5 py-1.5 sm:py-2 rounded-full text-xs font-extrabold transition shadow-xs cursor-pointer"
             >
               Login
             </button>
           </div>
         </header>
 
-        {/* 2nd Row: Action Buttons Bar - Fixed Sticky Navbar */}
-        <div className="sticky top-0 z-40 bg-white/95 backdrop-blur-md shadow-md border-b border-slate-200 w-full py-2.5 px-3 sm:px-12 flex items-center justify-between">
-          <div className="flex items-center gap-2 sm:gap-3 text-xs font-bold w-full overflow-x-auto scrollbar-hide py-1">
-            <a href="#home-service" className="border border-rose-500 text-rose-600 hover:bg-rose-600 hover:text-white px-3.5 py-1.5 rounded-full text-[11px] sm:text-xs font-black transition uppercase flex items-center gap-1 shadow-xs cursor-pointer bg-rose-50/50 whitespace-nowrap flex-shrink-0">
-              Home Service
-            </a>
-            
+        {/* 2nd Row: Sticky Action Buttons Bar (Left Aligned on both Mobile & Desktop) */}
+        <div className="sticky top-0 z-30 bg-white/95 backdrop-blur-md shadow-sm border-b border-slate-200 w-full py-2.5 px-3 sm:px-12 flex items-center justify-start">
+          <div className="flex items-center justify-start gap-2 sm:gap-3 text-xs font-bold w-full overflow-x-auto scrollbar-hide py-0.5">
             <button 
               onClick={() => { setQuickSubmitted(false); setQuickForm({ name: '', age: '', contact: '' }); setIsQuickReserveOpen(true); }}
-              className="border border-rose-500 text-rose-600 hover:bg-rose-600 hover:text-white px-3.5 py-1.5 rounded-full text-[11px] sm:text-xs font-black transition uppercase flex items-center gap-1 shadow-xs cursor-pointer bg-rose-50/50 whitespace-nowrap flex-shrink-0"
+              className="border border-rose-500 text-rose-600 hover:bg-rose-600 hover:text-white px-3 sm:px-4 py-1.5 rounded-full text-[10px] sm:text-xs font-black transition uppercase flex items-center gap-1 shadow-xs cursor-pointer bg-rose-50/50 whitespace-nowrap flex-shrink-0"
             >
               <span>⚡</span> Quick Reserve
             </button>
 
             <button 
               onClick={() => { setIsReportModalOpen(true); setReportSearched(false); setReportResult(null); setLabReportList([]); setReportInvoice(''); }}
-              className="border border-rose-500 text-rose-600 hover:bg-rose-600 hover:text-white px-3.5 py-1.5 rounded-full text-[11px] sm:text-xs font-black transition uppercase flex items-center gap-1 shadow-xs cursor-pointer bg-rose-50/50 whitespace-nowrap flex-shrink-0"
+              className="border border-rose-500 text-rose-600 hover:bg-rose-600 hover:text-white px-3 sm:px-4 py-1.5 rounded-full text-[10px] sm:text-xs font-black transition uppercase flex items-center gap-1 shadow-xs cursor-pointer bg-rose-50/50 whitespace-nowrap flex-shrink-0"
             >
               <span>📄</span> Download Report
             </button>
 
             <button 
               onClick={() => setIsPackageModalOpen(true)}
-              className="border border-rose-500 text-rose-600 hover:bg-rose-600 hover:text-white px-3.5 py-1.5 rounded-full text-[11px] sm:text-xs font-black transition uppercase flex items-center gap-1 shadow-xs cursor-pointer bg-rose-50/50 whitespace-nowrap flex-shrink-0"
+              className="border border-rose-500 text-rose-600 hover:bg-rose-600 hover:text-white px-3 sm:px-4 py-1.5 rounded-full text-[10px] sm:text-xs font-black transition uppercase flex items-center gap-1 shadow-xs cursor-pointer bg-rose-50/50 whitespace-nowrap flex-shrink-0"
             >
               <span>📦</span> Package
             </button>
           </div>
         </div>
 
-        {/* Hero Banner Section */}
+        {/* Hero Banner Section (With Angled 3D Picture Frame on both Mobile & Laptop) */}
         <section className="w-full px-3 sm:px-12 py-3 sm:py-6">
-          <div className={`w-full bg-gradient-to-r ${heroSlides[currentSlide].bgGradient} rounded-3xl p-4 sm:p-10 flex flex-col md:flex-row items-center justify-between shadow-xs border ${heroSlides[currentSlide].border} relative overflow-hidden transition-all duration-500`}>
+          <div className={`w-full bg-gradient-to-r ${heroSlides[currentSlide].bgGradient} rounded-3xl p-5 sm:p-10 flex flex-col md:flex-row items-center justify-between shadow-xs border ${heroSlides[currentSlide].border} relative overflow-hidden transition-all duration-500`}>
             
-            {/* Picture */}
-            <div className="w-full md:w-auto flex justify-center z-10 mb-4 md:mb-0 md:order-2">
-              <div className="bg-white p-2.5 rounded-3xl shadow-lg border border-slate-200 w-[200px] sm:w-[280px] h-[150px] sm:h-[210px] flex items-center justify-center overflow-hidden transform md:rotate-2 md:hover:rotate-0 transition duration-300">
+            {/* Angled 3D Picture Frame */}
+            <div className="w-full md:w-auto flex justify-center z-10 mb-5 md:mb-0 md:order-2 py-2">
+              <div className="angled-doctor-frame bg-white p-1.5 rounded-lg w-[190px] sm:w-[250px] h-[210px] sm:h-[260px] flex items-center justify-center overflow-hidden">
                 <img 
                   src={heroSlides[currentSlide].image} 
                   alt="Hospital Banner" 
                   onError={(e: any) => { e.target.src = "/doctors/doctor-1.png"; }}
-                  className="w-full h-full object-cover object-top rounded-2xl"
+                  className="w-full h-full object-cover object-top rounded-sm"
                 />
               </div>
             </div>
@@ -712,7 +718,7 @@ export default function Home() {
           </div>
         </section>
 
-        {/* Doctors List Grid Section with Department Filter Row placed RIGHT UNDER Our Doctors Header */}
+        {/* Doctors List Grid Section */}
         <section id="doctors" className="w-full px-3 sm:px-12 py-4">
           <div className="flex flex-col md:flex-row justify-between items-start md:items-center mb-4 pb-3 border-b-2 border-teal-600 gap-3">
             <div>
@@ -722,7 +728,7 @@ export default function Home() {
               <p className="text-[10px] sm:text-xs text-slate-500">Qualified specialists ready to assist you</p>
             </div>
 
-            {/* Department Filter Row right below Our Doctors heading */}
+            {/* Department Filter Row */}
             <div className="w-full md:w-auto py-1">
               <div className="flex items-center gap-1.5 flex-wrap">
                 {departments.map((dept, idx) => (
@@ -750,29 +756,32 @@ export default function Home() {
 
           <div 
             ref={scrollRef}
-            className="flex gap-3 overflow-x-auto scrollbar-hide pb-3 snap-x snap-mandatory w-full pt-1"
+            className="flex gap-3.5 overflow-x-auto scrollbar-hide pb-4 snap-x snap-mandatory w-full pt-2"
             style={{ scrollbarWidth: 'none', msOverflowStyle: 'none' }}
           >
             {filteredDoctorsByDept.map((doc, idx) => (
               <div 
                 key={`home-doc-card-${doc.id || doc.doctor_no || idx}-${idx}`} 
                 onClick={() => handleCardClick(doc)}
-                className="w-[210px] sm:w-[260px] bg-white border border-slate-200 rounded-2xl p-2.5 text-center shadow-xs hover:shadow-md transition snap-start flex-shrink-0 cursor-pointer group flex flex-col justify-between relative overflow-hidden"
+                className="w-[215px] sm:w-[260px] bg-white border border-slate-200 rounded-2xl p-3 text-center shadow-xs hover:shadow-md transition snap-start flex-shrink-0 cursor-pointer group flex flex-col justify-between relative overflow-hidden"
               >
                 {getDoctorBadge(doc.days, doc.status)}
 
-                <div className="w-full h-36 sm:h-48 mx-auto rounded-xl bg-slate-50 mb-2.5 overflow-hidden border border-slate-100 flex items-center justify-center relative">
-                  <img 
-                    src={doc.image_url || `/doctors/doctor-${doc.doctor_no || 1}.png`} 
-                    alt={doc.name} 
-                    onError={(e: any) => { e.target.src = '/doctors/doctor-1.png'; }}
-                    className={`w-full h-full object-cover object-top group-hover:scale-105 transition duration-300 ${doc.status === 'Absent' ? 'grayscale opacity-75' : ''}`}
-                  />
-                  {doc.status === 'Absent' && (
-                    <div className="absolute inset-0 bg-rose-900/30 backdrop-blur-[1px] flex items-center justify-center">
-                      <span className="bg-rose-600 text-white font-extrabold text-[11px] px-2.5 py-0.5 rounded-full shadow-lg">Absent Today</span>
-                    </div>
-                  )}
+                {/* Angled 3D Doctor Image Frame inside Card */}
+                <div className="w-full h-44 sm:h-52 mx-auto mb-3 flex items-center justify-center relative py-2 px-3 bg-gradient-to-b from-slate-50 to-white rounded-xl">
+                  <div className="angled-doctor-frame w-full h-full bg-white p-1 rounded-md overflow-hidden relative">
+                    <img 
+                      src={doc.image_url || `/doctors/doctor-${doc.doctor_no || 1}.png`} 
+                      alt={doc.name} 
+                      onError={(e: any) => { e.target.src = '/doctors/doctor-1.png'; }}
+                      className={`w-full h-full object-cover object-top transition duration-300 ${doc.status === 'Absent' ? 'grayscale opacity-75' : ''}`}
+                    />
+                    {doc.status === 'Absent' && (
+                      <div className="absolute inset-0 bg-rose-900/30 backdrop-blur-[1px] flex items-center justify-center">
+                        <span className="bg-rose-600 text-white font-extrabold text-[11px] px-2.5 py-0.5 rounded-full shadow-lg">Absent Today</span>
+                      </div>
+                    )}
+                  </div>
                 </div>
 
                 <div className="bg-[#e6f4f4]/60 border border-[#008080]/20 rounded-xl p-2 text-left">
@@ -869,19 +878,19 @@ export default function Home() {
             <div className="text-center mb-4">
               <div className="w-10 h-10 bg-teal-50 text-[#008080] rounded-full flex items-center justify-center mx-auto text-base mb-1.5 border border-teal-100">📄</div>
               <h3 className="text-base font-black text-slate-900">Download Diagnostic Lab Report</h3>
-              <p className="text-[11px] text-slate-500">Enter Invoice ID (INV-1001) or Phone Number</p>
+              <p className="text-[11px] text-slate-500">Enter your Bill / Invoice Number or Phone Number</p>
             </div>
 
             <form onSubmit={handleSearchReports} className="space-y-3 mb-3">
               <div>
-                <label className="text-xs font-bold text-slate-700">Invoice ID / Phone Number *</label>
+                <label className="text-xs font-bold text-slate-700">Bill / Invoice Number or Phone *</label>
                 <div className="flex gap-2 mt-1">
                   <input 
                     type="text"
                     required
                     value={reportInvoice}
                     onChange={e => setReportInvoice(e.target.value)}
-                    placeholder="INV-1001 or 017XXXXXXXX"
+                    placeholder="Enter Bill / Invoice No or Phone"
                     className="flex-1 border rounded-xl px-3 py-2 text-xs font-mono outline-none focus:ring-2 focus:ring-teal-500"
                   />
                   <button 
@@ -902,7 +911,7 @@ export default function Home() {
                     {labReportList.map((rep) => (
                       <div key={rep.id} className="bg-slate-50 rounded-xl p-3 border border-slate-200 space-y-1.5 text-xs">
                         <div className="flex justify-between items-center border-b pb-1.5">
-                          <span className="font-mono font-black text-xs text-[#008080]">{rep.invoice_no}</span>
+                          <span className="font-mono font-black text-xs text-[#008080]">Bill No: {rep.invoice_no}</span>
                           <span className={`font-bold px-2 py-0.5 rounded text-[9px] ${rep.delivery_status === 'Ready' ? 'bg-emerald-100 text-emerald-800' : 'bg-amber-100 text-amber-800'}`}>
                             {rep.delivery_status === 'Ready' ? '✅ Ready' : '⏳ Processing'}
                           </span>
@@ -959,7 +968,7 @@ export default function Home() {
                   </div>
                 ) : (
                   <div className="text-center py-4 bg-slate-50 rounded-xl border border-slate-100">
-                    <p className="text-xs text-slate-500 font-semibold">No lab report found with this ID or phone.</p>
+                    <p className="text-xs text-slate-500 font-semibold">No lab report found with this Bill Number or Phone.</p>
                   </div>
                 )}
               </div>
@@ -1074,7 +1083,7 @@ export default function Home() {
                       maxLength={11}
                       value={quickForm.contact} 
                       onChange={e => setQuickForm({...quickForm, contact: e.target.value.replace(/\D/g, '')})}
-                      placeholder="017XXXXXXXX" 
+                      placeholder="11 Digit Mobile Number" 
                       className="w-full border rounded-xl px-3 py-2 text-xs font-mono outline-none focus:ring-2 focus:ring-teal-500 mt-1" 
                     />
                   </div>
@@ -1270,7 +1279,7 @@ export default function Home() {
                         minLength={11}
                         value={formData.phone} 
                         onChange={e => setFormData({...formData, phone: e.target.value.replace(/\D/g, '')})}
-                        placeholder="017XXXXXXXX" 
+                        placeholder="11 Digit Mobile Number" 
                         className="w-full border rounded-xl px-3 py-2 text-xs outline-none focus:ring-2 focus:ring-teal-500 mt-1 font-mono" 
                       />
                     </div>
