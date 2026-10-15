@@ -232,7 +232,6 @@ export default function AdminPanel() {
     }
   }
 
-  // ১ ক্লিকে ডাক্তারের Present / Absent স্ট্যাটাস পরিবর্তন করার ফাংশন
   const handleToggleDoctorStatus = async (doc: any) => {
     const nextStatus = doc.status === 'Absent' ? 'Present' : 'Absent'
     try {
@@ -269,7 +268,7 @@ export default function AdminPanel() {
     setIsLabEditMode(false)
     setCurrentLabId(null)
     setLabForm({
-      invoice_no: '', // একদম খালি রাখা হলো যাতে স্লিপ দেখে অ্যাডমিন নিজে বসাতে পারে
+      invoice_no: '',
       patient_name: '',
       phone: '',
       age: '',
@@ -812,6 +811,7 @@ export default function AdminPanel() {
     }
   }
 
+  // PDF ডাউনলোডে Note কলাম এবং সঠিক বানান "ডেলটা হেলথ্ কেয়ার যাত্রাবাড়ী লিমিটেড" যুক্ত করা হলো
   const downloadPDFReport = () => {
     const printWindow = window.open('', '', 'left=0,top=0,width=900,height=700')
     if (!printWindow) return
@@ -828,6 +828,7 @@ export default function AdminPanel() {
           <td>${docName}</td>
           <td>${a.booking_date}</td>
           <td>#${a.computed_serial || a.serial_number}</td>
+          <td>${a.symptoms || '-'}</td>
           <td>${a.patient_type === 'Admin' ? 'Admin' : a.patient_type === 'Emergency' ? 'Quick Reserve' : 'Online'}</td>
         </tr>
       `
@@ -851,7 +852,7 @@ export default function AdminPanel() {
         </head>
         <body>
           <div class="header">
-            <h2>ডেল্টা হেলথ কেয়ার যাত্রাবাড়ী লিমিটেড</h2>
+            <h2>ডেলটা হেলথ্ কেয়ার যাত্রাবাড়ী লিমিটেড</h2>
             <p>Official Appointments List & Summary Report</p>
             <p>Generated Date: ${new Date().toLocaleDateString()}</p>
           </div>
@@ -865,11 +866,12 @@ export default function AdminPanel() {
                 <th>Doctor</th>
                 <th>Date</th>
                 <th>Serial</th>
+                <th>Note</th>
                 <th>Type</th>
               </tr>
             </thead>
             <tbody>
-              ${rowsHtml || '<tr><td colspan="8" style="text-align:center;">No appointments found.</td></tr>'}
+              ${rowsHtml || '<tr><td colspan="9" style="text-align:center;">No appointments found.</td></tr>'}
             </tbody>
           </table>
           <div class="footer">
@@ -900,7 +902,6 @@ export default function AdminPanel() {
     return true
   })
 
-  // এই ভেরিয়েবলটি যুক্ত করা হয়েছে যাতে Lab & Reports ট্যাবে আর কোনো Runtime Error না আসে
   const filteredLabReports = labReports.filter(rep => {
     const matchesStatus = labFilterStatus === 'All' ? true : rep.delivery_status === labFilterStatus
     const q = labSearchQuery.trim().toLowerCase()
@@ -921,7 +922,7 @@ export default function AdminPanel() {
               <img src="/logo.png" alt="Logo" className="w-full h-full object-contain" />
             </div>
             <div>
-              <h2 className="text-xs font-bold text-[#008080]">ডেল্টা হেলথ কেয়ার</h2>
+              <h2 className="text-xs font-bold text-[#008080]">ডেলটা হেলথ্ কেয়ার যাত্রাবাড়ী লিমিটেড</h2>
               <h1 className="text-sm font-black text-slate-900">Admin Authentication</h1>
             </div>
           </div>
@@ -968,7 +969,7 @@ export default function AdminPanel() {
             <img src="/logo.png" alt="Logo" className="w-full h-full object-contain" />
           </div>
           <div>
-            <h2 className="text-[10px] font-bold text-[#008080]">ডেল্টা হেলথ কেয়ার যাত্রাবাড়ী লিমিটেড</h2>
+            <h2 className="text-[10px] font-bold text-[#008080]">ডেলটা হেলথ্ কেয়ার যাত্রাবাড়ী লিমিটেড</h2>
             <h1 className="font-black text-sm text-slate-900">JATRABARI LTD. (Admin Dashboard)</h1>
           </div>
         </div>
@@ -1602,7 +1603,6 @@ export default function AdminPanel() {
         </main>
       </div>
 
-      {/* Lab Report Modal (Completely Blank Bill / Invoice No Input without any example numbers) */}
       {isLabModalOpen && (
         <div className="fixed inset-0 bg-black/50 backdrop-blur-xs flex items-center justify-center p-4 z-50 overflow-y-auto">
           <div className="bg-white rounded-2xl max-w-2xl w-full p-6 sm:p-8 shadow-2xl relative max-h-[92vh] overflow-y-auto">
