@@ -609,20 +609,27 @@ export default function Home() {
       </div>
 
       <div className="w-full">
-        {/* Top Header - Exact Equal Width for Bangla & English on both Mobile and Laptop */}
+        {/* Top Header - Guaranteed 100% Equal Width for Bangla & English on ALL devices using Flex Justify-Between */}
         <header className="bg-gradient-to-r from-teal-50/90 via-white to-teal-50/90 text-slate-800 py-3.5 px-3 sm:px-12 flex flex-row justify-between items-center gap-2 border-b border-teal-100 shadow-xs w-full">
           <div className="flex items-center gap-2.5 sm:gap-3.5">
             <div className="w-10 h-10 sm:w-12 sm:h-12 flex items-center justify-center bg-white rounded-full p-1.5 shadow-xs border border-teal-200 flex-shrink-0">
               <img src="/logo.png" alt="Logo" className="w-full h-full object-contain animate-3d-spin" onError={(e: any) => { e.target.src = "https://cdn-icons-png.flaticon.com/512/3774/3774299.png"; }} />
             </div>
             
-            <div className="inline-flex flex-col justify-center">
-              <h2 className="text-[13px] sm:text-[15.5px] font-black text-[#007b7b] leading-tight tracking-normal whitespace-nowrap">
+            <div className="inline-grid grid-cols-1 items-center">
+              <h2 className="text-[13.5px] sm:text-[16px] font-black text-[#007b7b] leading-tight whitespace-nowrap">
                 ডেলটা হেলথ্ কেয়ার যাত্রাবাড়ী লিমিটেড
               </h2>
               <div className="w-full border-b-[1.5px] border-[#007b7b] my-0.5"></div>
-              <h1 className="text-[8.8px] sm:text-[10.5px] font-extrabold text-rose-600 tracking-[0.065em] sm:tracking-[0.075em] leading-tight whitespace-nowrap">
-                DELTA HEALTH CARE JATRABARI LIMITED
+              <h1 
+                className="w-full flex justify-between items-center text-[9.5px] sm:text-[11px] font-extrabold text-rose-600 leading-tight uppercase select-none"
+                aria-label="DELTA HEALTH CARE JATRABARI LIMITED"
+              >
+                <span>DELTA</span>
+                <span>HEALTH</span>
+                <span>CARE</span>
+                <span>JATRABARI</span>
+                <span>LIMITED</span>
               </h1>
             </div>
           </div>
