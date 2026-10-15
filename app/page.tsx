@@ -567,7 +567,7 @@ export default function Home() {
         `}</style>
         <div className="flex flex-col items-center">
           <div className="w-24 h-24 flex items-center justify-center p-2 shadow-xl rounded-2xl border border-teal-100 bg-white mb-4">
-            <img src="/logo.png" alt="Logo" className="w-full h-full object-contain animate-3d-spin" />
+            <img src="/logo.png" alt="Logo" className="w-full h-full object-contain animate-3d-spin" onError={(e: any) => { e.target.src = "https://cdn-icons-png.flaticon.com/512/3774/3774299.png"; }} />
           </div>
           <h2 className="text-xs font-extrabold text-[#008080] tracking-wide mt-2 text-center px-4">
             ডেলটা হেলথ্ কেয়ার যাত্রাবাড়ী লিমিটেড
@@ -578,7 +578,7 @@ export default function Home() {
   }
 
   return (
-    <div className="min-h-screen bg-white text-slate-900 font-sans selection:bg-teal-100 flex flex-col justify-between w-full overflow-x-hidden">
+    <div className="min-h-screen bg-white text-slate-900 font-sans selection:bg-teal-100 flex flex-col justify-between w-full overflow-x-hidden relative">
       <style jsx>{`
         @keyframes spin3d {
           0% { transform: rotateY(0deg); }
@@ -590,62 +590,67 @@ export default function Home() {
         }
       `}</style>
       
+      {/* Floating Always-Visible Hotline Button */}
+      <div className="fixed bottom-5 right-5 z-50 flex items-center shadow-2xl rounded-full bg-[#008080] text-white border-2 border-white animate-bounce">
+        <a href="tel:09666720320" className="flex items-center gap-2 py-2.5 px-4 rounded-full hover:bg-[#006666] transition cursor-pointer">
+          <span className="text-lg">📞</span>
+          <span className="text-xs sm:text-sm font-black font-mono tracking-wide">09666720320</span>
+        </a>
+      </div>
+
       <div className="w-full">
-        {/* Top Header - Mobile Optimized */}
-        <header className="bg-white text-slate-800 py-3 px-3 sm:px-12 flex flex-row justify-between items-center gap-2 border-b border-slate-200 shadow-xs w-full">
-          <div className="flex items-center gap-2.5">
-            <div className="w-10 h-10 sm:w-12 sm:h-12 flex items-center justify-center bg-teal-50 rounded-xl p-1 shadow-xs border border-teal-100 flex-shrink-0">
-              <img src="/logo.png" alt="Logo" className="w-full h-full object-contain animate-3d-spin" />
+        {/* Top Header with Professional Soft Gradient/Solid Background */}
+        <header className="bg-gradient-to-r from-teal-50/80 via-white to-teal-50/80 text-slate-800 py-3.5 px-4 sm:px-12 flex flex-row justify-between items-center gap-3 border-b-4 border-[#008080] shadow-md w-full">
+          <div className="flex items-center gap-3">
+            <div className="w-11 h-11 sm:w-14 sm:h-14 flex items-center justify-center bg-white rounded-2xl p-1.5 shadow-sm border border-teal-200 flex-shrink-0">
+              <img src="/logo.png" alt="Logo" className="w-full h-full object-contain animate-3d-spin" onError={(e: any) => { e.target.src = "https://cdn-icons-png.flaticon.com/512/3774/3774299.png"; }} />
             </div>
             
             <div className="flex flex-col justify-center">
-              <h2 className="text-[11px] sm:text-sm font-black text-[#007b7b] leading-tight tracking-normal whitespace-nowrap">
+              <h2 className="text-xs sm:text-base font-black text-[#007b7b] leading-tight tracking-tight whitespace-nowrap">
                 ডেলটা হেলথ্ কেয়ার যাত্রাবাড়ী লিমিটেড
               </h2>
-              <div className="w-full border-b-[1.5px] border-[#007b7b] my-0.5"></div>
-              <h1 className="text-[9px] sm:text-xs font-bold text-rose-600 tracking-wider leading-tight whitespace-nowrap">
+              <div className="w-full border-b-[2px] border-[#007b7b] my-0.5"></div>
+              <h1 className="text-[11px] sm:text-xs font-black text-rose-600 tracking-wider leading-tight whitespace-nowrap">
                 DELTA HEALTH CARE JATRABARI LIMITED
               </h1>
             </div>
           </div>
 
           <div className="flex items-center flex-shrink-0">
-            <a href="tel:09666720320" className="flex items-center bg-white border border-[#008080] rounded-full shadow-sm overflow-hidden hover:opacity-95 transition cursor-pointer py-0.5 px-1 sm:px-2">
-              <div className="bg-[#008080] text-white w-7 h-7 sm:w-9 sm:h-9 flex items-center justify-center rounded-full text-xs sm:text-sm flex-shrink-0">
-                📞
-              </div>
-              <div className="px-2 text-left hidden xs:block">
-                <span className="text-[9px] text-[#008080] font-black block leading-none">HOTLINE</span>
-                <span className="text-xs sm:text-sm font-black text-slate-800 font-mono tracking-tight block">09666720320</span>
-              </div>
-            </a>
+            <button 
+              onClick={handleSecretAdminAccess}
+              className="bg-[#008080] hover:bg-[#006666] text-white px-5 py-2 rounded-xl text-xs font-extrabold transition shadow-sm cursor-pointer"
+            >
+              Login
+            </button>
           </div>
         </header>
 
-        {/* Sticky Action Buttons Bar */}
-        <div className="sticky top-0 z-40 bg-slate-50/95 border-b border-slate-200 py-2 px-3 sm:px-12 flex items-center justify-between shadow-xs backdrop-blur-md w-full">
-          <div className="flex items-center gap-1.5 sm:gap-3 text-xs font-bold w-full overflow-x-auto scrollbar-hide py-1">
-            <a href="#home-service" className="border border-rose-500 text-rose-600 hover:bg-rose-600 hover:text-white px-3 py-1.5 rounded-full text-[10px] sm:text-xs font-black transition uppercase flex items-center gap-1 shadow-xs cursor-pointer bg-rose-50/50 whitespace-nowrap flex-shrink-0">
+        {/* Sticky Row: 2nd Navigation Bar (Action Buttons) Locked Always on Scroll */}
+        <div className="sticky top-0 z-40 bg-white/95 backdrop-blur-md shadow-md border-b border-slate-200 w-full py-2.5 px-3 sm:px-12 flex items-center justify-between">
+          <div className="flex items-center gap-2 sm:gap-3 text-xs font-bold w-full overflow-x-auto scrollbar-hide py-1">
+            <a href="#home-service" className="border border-rose-500 text-rose-600 hover:bg-rose-600 hover:text-white px-3.5 py-1.5 rounded-full text-[11px] sm:text-xs font-black transition uppercase flex items-center gap-1 shadow-xs cursor-pointer bg-rose-50/50 whitespace-nowrap flex-shrink-0">
               Home Service
             </a>
             
             <button 
               onClick={() => { setQuickSubmitted(false); setQuickForm({ name: '', age: '', contact: '' }); setIsQuickReserveOpen(true); }}
-              className="border border-rose-500 text-rose-600 hover:bg-rose-600 hover:text-white px-3 py-1.5 rounded-full text-[10px] sm:text-xs font-black transition uppercase flex items-center gap-1 shadow-xs cursor-pointer bg-rose-50/50 whitespace-nowrap flex-shrink-0"
+              className="border border-rose-500 text-rose-600 hover:bg-rose-600 hover:text-white px-3.5 py-1.5 rounded-full text-[11px] sm:text-xs font-black transition uppercase flex items-center gap-1 shadow-xs cursor-pointer bg-rose-50/50 whitespace-nowrap flex-shrink-0"
             >
               <span>⚡</span> Quick Reserve
             </button>
 
             <button 
               onClick={() => { setIsReportModalOpen(true); setReportSearched(false); setReportResult(null); setLabReportList([]); setReportInvoice(''); }}
-              className="border border-rose-500 text-rose-600 hover:bg-rose-600 hover:text-white px-3 py-1.5 rounded-full text-[10px] sm:text-xs font-black transition uppercase flex items-center gap-1 shadow-xs cursor-pointer bg-rose-50/50 whitespace-nowrap flex-shrink-0"
+              className="border border-rose-500 text-rose-600 hover:bg-rose-600 hover:text-white px-3.5 py-1.5 rounded-full text-[11px] sm:text-xs font-black transition uppercase flex items-center gap-1 shadow-xs cursor-pointer bg-rose-50/50 whitespace-nowrap flex-shrink-0"
             >
               <span>📄</span> Download Report
             </button>
 
             <button 
               onClick={() => setIsPackageModalOpen(true)}
-              className="border border-rose-500 text-rose-600 hover:bg-rose-600 hover:text-white px-3 py-1.5 rounded-full text-[10px] sm:text-xs font-black transition uppercase flex items-center gap-1 shadow-xs cursor-pointer bg-rose-50/50 whitespace-nowrap flex-shrink-0"
+              className="border border-rose-500 text-rose-600 hover:bg-rose-600 hover:text-white px-3.5 py-1.5 rounded-full text-[11px] sm:text-xs font-black transition uppercase flex items-center gap-1 shadow-xs cursor-pointer bg-rose-50/50 whitespace-nowrap flex-shrink-0"
             >
               <span>📦</span> Package
             </button>
@@ -655,7 +660,21 @@ export default function Home() {
         {/* Hero Banner Section */}
         <section className="w-full px-3 sm:px-12 py-3 sm:py-6">
           <div className={`w-full bg-gradient-to-r ${heroSlides[currentSlide].bgGradient} rounded-3xl p-4 sm:p-10 flex flex-col md:flex-row items-center justify-between shadow-xs border ${heroSlides[currentSlide].border} relative overflow-hidden transition-all duration-500`}>
-            <div className="max-w-xl mb-4 md:mb-0 z-10 text-center md:text-left w-full">
+            
+            {/* Picture */}
+            <div className="w-full md:w-auto flex justify-center z-10 mb-4 md:mb-0 md:order-2">
+              <div className="bg-white p-2.5 rounded-3xl shadow-lg border border-slate-200 w-[200px] sm:w-[280px] h-[150px] sm:h-[210px] flex items-center justify-center overflow-hidden transform md:rotate-2 md:hover:rotate-0 transition duration-300">
+                <img 
+                  src={heroSlides[currentSlide].image} 
+                  alt="Hospital Banner" 
+                  onError={(e: any) => { e.target.src = "/doctors/doctor-1.png"; }}
+                  className="w-full h-full object-cover object-top rounded-2xl"
+                />
+              </div>
+            </div>
+
+            {/* Text & Button */}
+            <div className="max-w-xl z-10 text-center md:text-left w-full md:order-1">
               <h1 className="text-lg sm:text-3xl md:text-5xl font-black text-slate-900 leading-snug">
                 Book Doctor Appointments <span className="text-[#008080]">Hassle-Free</span>
               </h1>
@@ -680,17 +699,6 @@ export default function Home() {
               </div>
             </div>
 
-            <div className="w-full md:w-auto flex justify-center z-10 mt-3 md:mt-0">
-              <div className="bg-white p-2 rounded-2xl shadow-md border border-slate-100 w-[180px] sm:w-[260px] h-[130px] sm:h-[200px] flex items-center justify-center overflow-hidden">
-                <img 
-                  src={heroSlides[currentSlide].image} 
-                  alt="Hospital Banner" 
-                  onError={(e: any) => { e.target.src = "/doctors/doctor-1.png"; }}
-                  className="w-full h-full object-cover object-top rounded-xl"
-                />
-              </div>
-            </div>
-
             <div className="absolute bottom-2 right-4 flex gap-1.5 z-20">
               {heroSlides.map((_, index) => (
                 <button
@@ -704,32 +712,33 @@ export default function Home() {
           </div>
         </section>
 
-        {/* Departments Filter Bar */}
-        <section className="w-full px-3 sm:px-12 py-2">
-          <div className="flex items-center gap-2 overflow-x-auto scrollbar-hide py-1 px-0.5 w-full" style={{ scrollbarWidth: 'none', msOverflowStyle: 'none' }}>
-            {departments.map((dept, idx) => (
-              <button
-                key={`dept-${idx}`}
-                onClick={() => setSelectedDept(dept)}
-                className={`flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-bold whitespace-nowrap transition-all shadow-xs flex-shrink-0 ${selectedDept === dept ? 'bg-[#008080] text-white' : 'bg-slate-100 text-slate-700 hover:bg-slate-200'}`}
-              >
-                <span>{getDeptEmoji(dept)}</span>
-                <span>{dept}</span>
-              </button>
-            ))}
-          </div>
-        </section>
-
-        {/* Doctors List Grid Section - Fully Mobile Optimized */}
+        {/* Doctors List Grid Section with Department Filter Row placed RIGHT UNDER Our Doctors Header */}
         <section id="doctors" className="w-full px-3 sm:px-12 py-4">
-          <div className="flex justify-between items-center mb-3">
+          <div className="flex flex-col md:flex-row justify-between items-start md:items-center mb-4 pb-3 border-b-2 border-teal-600 gap-3">
             <div>
               <h2 className="text-base sm:text-2xl font-black text-slate-900">
                 Our Doctors ({filteredDoctorsByDept.length})
               </h2>
               <p className="text-[10px] sm:text-xs text-slate-500">Qualified specialists ready to assist you</p>
             </div>
-            <div className="flex gap-1">
+
+            {/* Department Filter Row right below Our Doctors heading */}
+            <div className="w-full md:w-auto py-1">
+              <div className="flex items-center gap-1.5 flex-wrap">
+                {departments.map((dept, idx) => (
+                  <button
+                    key={`dept-${idx}`}
+                    onClick={() => setSelectedDept(dept)}
+                    className={`flex items-center gap-1 px-3 py-1.5 rounded-full text-xs font-bold whitespace-nowrap transition-all shadow-xs ${selectedDept === dept ? 'bg-[#008080] text-white' : 'bg-white text-slate-700 hover:bg-slate-200 border border-slate-200'}`}
+                  >
+                    <span>{getDeptEmoji(dept)}</span>
+                    <span>{dept}</span>
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            <div className="hidden md:flex gap-1 flex-shrink-0">
               <button onClick={scrollLeft} className="w-7 h-7 rounded-lg border border-slate-300 flex items-center justify-center hover:bg-slate-100 text-slate-900 font-bold text-xs shadow-xs">
                 ‹
               </button>
@@ -741,7 +750,7 @@ export default function Home() {
 
           <div 
             ref={scrollRef}
-            className="flex gap-3 overflow-x-auto scrollbar-hide pb-3 snap-x snap-mandatory w-full"
+            className="flex gap-3 overflow-x-auto scrollbar-hide pb-3 snap-x snap-mandatory w-full pt-1"
             style={{ scrollbarWidth: 'none', msOverflowStyle: 'none' }}
           >
             {filteredDoctorsByDept.map((doc, idx) => (
@@ -793,7 +802,7 @@ export default function Home() {
         </section>
       </div>
 
-      {/* Footer Section - Mobile Optimized */}
+      {/* Footer Section */}
       <footer className="bg-[#008080] text-white py-8 px-4 sm:px-12 mt-8 border-t border-teal-700 w-full">
         <div className="w-full grid grid-cols-1 md:grid-cols-3 gap-6 items-start text-center md:text-left">
           <div className="flex flex-col items-center md:items-start">
@@ -803,7 +812,7 @@ export default function Home() {
                 className="w-9 h-9 flex items-center justify-center bg-white rounded-xl p-1 shadow-xs cursor-pointer" 
                 title="Staff Portal Access"
               >
-                <img src="/logo.png" alt="Logo" className="w-full h-full object-contain animate-3d-spin" />
+                <img src="/logo.png" alt="Logo" className="w-full h-full object-contain animate-3d-spin" onError={(e: any) => { e.target.src = "https://cdn-icons-png.flaticon.com/512/3774/3774299.png"; }} />
               </div>
               <span className="font-bold text-xs sm:text-sm text-white">ডেলটা হেলথ্ কেয়ার যাত্রাবাড়ী লিমিটেড</span>
             </div>
@@ -1083,7 +1092,7 @@ export default function Home() {
         </div>
       )}
 
-      {/* Doctor Booking Modal - Mobile Optimized */}
+      {/* Doctor Booking Modal */}
       {isModalOpen && (
         <div className="fixed inset-0 bg-black/60 backdrop-blur-xs flex items-center justify-center p-3 z-50 overflow-y-auto">
           <div className="bg-white rounded-2xl max-w-lg w-full p-4 sm:p-6 shadow-2xl relative my-auto max-h-[92vh] overflow-y-auto">
