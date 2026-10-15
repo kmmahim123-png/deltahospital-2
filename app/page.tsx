@@ -578,7 +578,7 @@ export default function Home() {
   }
 
   return (
-    <div className="min-h-screen bg-white text-slate-900 font-sans selection:bg-teal-100 flex flex-col justify-between w-full overflow-x-hidden relative">
+    <div className="min-h-screen bg-white text-slate-900 font-sans selection:bg-teal-100 flex flex-col justify-between w-full relative">
       <style jsx>{`
         @keyframes spin3d {
           0% { transform: rotateY(0deg); }
@@ -599,8 +599,8 @@ export default function Home() {
       </div>
 
       <div className="w-full">
-        {/* Top Header with Professional Soft Gradient/Solid Background */}
-        <header className="bg-gradient-to-r from-teal-50/80 via-white to-teal-50/80 text-slate-800 py-3.5 px-4 sm:px-12 flex flex-row justify-between items-center gap-3 border-b-4 border-[#008080] shadow-md w-full">
+        {/* Top Header */}
+        <header className="bg-gradient-to-r from-teal-50/90 via-white to-teal-50/90 text-slate-800 py-3.5 px-4 sm:px-12 flex flex-row justify-between items-center gap-3 shadow-sm w-full border-b border-teal-100">
           <div className="flex items-center gap-3">
             <div className="w-11 h-11 sm:w-14 sm:h-14 flex items-center justify-center bg-white rounded-2xl p-1.5 shadow-sm border border-teal-200 flex-shrink-0">
               <img src="/logo.png" alt="Logo" className="w-full h-full object-contain animate-3d-spin" onError={(e: any) => { e.target.src = "https://cdn-icons-png.flaticon.com/512/3774/3774299.png"; }} />
@@ -627,8 +627,8 @@ export default function Home() {
           </div>
         </header>
 
-        {/* Sticky Row: 2nd Navigation Bar (Action Buttons) Locked Always on Scroll */}
-        <div className="sticky top-0 z-40 bg-white/95 backdrop-blur-md shadow-md border-b border-slate-200 w-full py-2.5 px-3 sm:px-12 flex items-center justify-between">
+        {/* 2nd Row: Sticky Action Buttons Bar (Fixed position with high z-index to stay 100% visible on scroll) */}
+        <div className="sticky top-0 z-[9999] bg-white/95 backdrop-blur-md shadow-md border-b border-slate-200 w-full py-2.5 px-3 sm:px-12 flex items-center justify-between">
           <div className="flex items-center gap-2 sm:gap-3 text-xs font-bold w-full overflow-x-auto scrollbar-hide py-1">
             <a href="#home-service" className="border border-rose-500 text-rose-600 hover:bg-rose-600 hover:text-white px-3.5 py-1.5 rounded-full text-[11px] sm:text-xs font-black transition uppercase flex items-center gap-1 shadow-xs cursor-pointer bg-rose-50/50 whitespace-nowrap flex-shrink-0">
               Home Service

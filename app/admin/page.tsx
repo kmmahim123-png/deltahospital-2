@@ -5,6 +5,11 @@ import { supabase } from '@/lib/supabase'
 import { sharedDoctors } from '@/lib/doctors'
 
 export default function AdminPanel() {
+  // এখানে সিকিউরিটি কড়া করা হলো: ডিফল্ট false থাকবে, পাসওয়ার্ড ছাড়া কেউ ঢুকতে পারবে না
+  const [isAuthenticated, setIsAuthenticated] = useState(false)
+  const [passwordInput, setPasswordInput] = useState('')
+  const [showPassword, setShowPassword] = useState(false)
+  
   const [activeTab, setActiveTab] = useState<'doctors' | 'appointments' | 'booking' | 'quick-reserve' | 'quick-reserve-list' | 'lab-reports'>('doctors')
   const [appointments, setAppointments] = useState<any[]>([])
   const [doctors, setDoctors] = useState<any[]>(sharedDoctors)
@@ -59,7 +64,6 @@ export default function AdminPanel() {
   const [quickForm, setQuickForm] = useState({ name: '', age: '', contact: '' })
   const [quickSubmitted, setQuickSubmitted] = useState(false)
 
-  // ==================== LAB & REPORTS STATES ====================
   const [labReports, setLabReports] = useState<any[]>([])
   const [labSearchQuery, setLabSearchQuery] = useState('')
   const [labFilterStatus, setLabFilterStatus] = useState('All')
@@ -70,20 +74,10 @@ export default function AdminPanel() {
   const [savingLab, setSavingLab] = useState(false)
 
   const commonLabTests = [
-    'CBC with ESR',
-    'Random Blood Sugar (RBS)',
-    'Fasting Blood Sugar (FBS)',
-    'HbA1c',
-    'Lipid Profile',
-    'Liver Function Test (LFT / SGPT)',
-    'Serum Creatinine',
-    'Urine R/M/E',
-    'Thyroid Profile (TSH, FT3, FT4)',
-    'ECG 12 Channel',
-    'Digital Chest X-Ray P/A View',
-    'USG of Whole Abdomen',
-    'USG of Pregnancy Profile',
-    'Dengue NS1 / IgG / IgM'
+    'CBC with ESR', 'Random Blood Sugar (RBS)', 'Fasting Blood Sugar (FBS)', 'HbA1c',
+    'Lipid Profile', 'Liver Function Test (LFT / SGPT)', 'Serum Creatinine', 'Urine R/M/E',
+    'Thyroid Profile (TSH, FT3, FT4)', 'ECG 12 Channel', 'Digital Chest X-Ray P/A View',
+    'USG of Whole Abdomen', 'USG of Pregnancy Profile', 'Dengue NS1 / IgG / IgM'
   ]
 
   const getTodayBDDate = () => {
@@ -101,27 +95,41 @@ export default function AdminPanel() {
   }
 
   const [labForm, setLabForm] = useState({
-    invoice_no: '',
-    patient_name: '',
-    phone: '',
-    age: '',
-    gender: 'Male',
-    test_name: '',
-    referred_by: 'Self',
-    test_date: '',
-    delivery_status: 'Ready',
-    payment_status: 'Paid',
-    amount: '500 BDT',
-    report_summary: '',
-    file_url: '',
-    file_name: ''
+    invoice_no: '', patient_name: '', phone: '', age: '', gender: 'Male',
+    test_name: '', referred_by: 'Self', test_date: '', delivery_status: 'Ready',
+    payment_status: 'Paid', amount: '500 BDT', report_summary: '', file_url: '', file_name: ''
   })
 
+  // ব্রাউজার সেশন চেক: যদি আগে লগইন করা থাকে তবেই সেশন রাখবে
   useEffect(() => {
-    cleanupPastBookingsAndFetch()
-    fetchDatabaseDoctors()
-    fetchLabReports()
+    const authStatus = localStorage.getItem('delta_admin_auth')
+    if (authStatus === 'true') {
+      setIsAuthenticated(true)
+    }
   }, [])
+
+  useEffect(() => {
+    if (isAuthenticated) {
+      cleanupPastBookingsAndFetch()
+      fetchDatabaseDoctors()
+      fetchLabReports()
+    }
+  }, [isAuthenticated])
+
+  const handleLogin = (e: React.FormEvent) => {
+    e.preventDefault()
+    if (passwordInput === 'delta123') {
+      setIsAuthenticated(true)
+      localStorage.setItem('delta_admin_auth', 'true')
+    } else {
+      alert('Incorrect Password! Try "delta123"')
+    }
+  }
+
+  const handleLogout = () => {
+    setIsAuthenticated(false)
+    localStorage.removeItem('delta_admin_auth')
+  }
 
   const parseDoctorDaysArray = (rawDays: any, fallbackDays?: string[]): string[] => {
     let result: string[] = []
@@ -220,7 +228,6 @@ export default function AdminPanel() {
     }
   }
 
-  // ==================== LAB REPORTS FUNCTIONS ====================
   async function fetchLabReports() {
     try {
       const { data, error } = await supabase
@@ -571,7 +578,7 @@ export default function AdminPanel() {
         if (error) throw error
       }
 
-      alert('Doctor updated in Database & Live Website successfully!')
+      alert('Doctor updated successfully!')
       setIsAddModalOpen(false)
       fetchDatabaseDoctors()
     } catch (err: any) {
@@ -866,16 +873,53 @@ export default function AdminPanel() {
     return true
   })
 
-  const filteredLabReports = labReports.filter(rep => {
-    const matchesStatus = labFilterStatus === 'All' ? true : rep.delivery_status === labFilterStatus
-    const q = labSearchQuery.trim().toLowerCase()
-    const matchesQuery = !q
-      || rep.invoice_no?.toLowerCase().includes(q)
-      || rep.patient_name?.toLowerCase().includes(q)
-      || rep.phone?.toLowerCase().includes(q)
-      || rep.test_name?.toLowerCase().includes(q)
-    return matchesStatus && matchesQuery
-  })
+  if (!isAuthenticated) {
+    return (
+      <div className="min-h-screen bg-slate-100 flex items-center justify-center p-4">
+        <div className="bg-white p-8 rounded-2xl shadow-xl max-w-md w-full border border-slate-200">
+          <div className="flex items-center gap-3 mb-6">
+            <div className="w-10 h-10 bg-teal-50 rounded-xl p-1 flex items-center justify-center border">
+              <img src="/logo.png" alt="Logo" className="w-full h-full object-contain" />
+            </div>
+            <div>
+              <h2 className="text-xs font-bold text-[#008080]">ডেল্টা হেলথ কেয়ার</h2>
+              <h1 className="text-sm font-black text-slate-900">Admin Authentication</h1>
+            </div>
+          </div>
+          <form onSubmit={handleLogin} className="space-y-4" autoComplete="off">
+            <div>
+              <label className="text-xs font-bold text-slate-700">Enter Admin Password</label>
+              <div className="relative mt-1">
+                <input 
+                  type={showPassword ? "text" : "password"} 
+                  required
+                  value={passwordInput}
+                  autoComplete="off"
+                  name="random_pwd_field_delta"
+                  onChange={e => setPasswordInput(e.target.value)}
+                  placeholder="Enter password"
+                  className="w-full border rounded-xl px-3 py-2.5 text-sm outline-none focus:ring-2 focus:ring-[#008080] pr-10"
+                />
+                <button
+                  type="button"
+                  onClick={() => setShowPassword(!showPassword)}
+                  className="absolute right-3 top-2.5 text-slate-500 hover:text-slate-800 text-sm font-bold focus:outline-none"
+                >
+                  {showPassword ? "👁️‍🗨️" : "👁️"}
+                </button>
+              </div>
+            </div>
+            <button type="submit" className="w-full bg-[#008080] hover:bg-[#006666] text-white py-2.5 rounded-xl font-bold text-sm transition shadow-md">
+              Login to Admin Panel
+            </button>
+            <div className="text-center mt-4">
+              <a href="/" className="text-xs font-bold text-slate-500 hover:underline">← Back to Website</a>
+            </div>
+          </form>
+        </div>
+      </div>
+    )
+  }
 
   return (
     <div className="min-h-screen bg-slate-100 flex flex-col font-sans text-slate-900">
@@ -886,13 +930,16 @@ export default function AdminPanel() {
           </div>
           <div>
             <h2 className="text-[10px] font-bold text-[#008080]">ডেল্টা হেলথ কেয়ার যাত্রাবাড়ী লিমিটেড</h2>
-            <h1 className="font-black text-sm text-slate-900">JATRABARI LTD. (Admin Dashboard - V2 Updated)</h1>
+            <h1 className="font-black text-sm text-slate-900">JATRABARI LTD. (Admin Dashboard)</h1>
           </div>
         </div>
         <div className="flex items-center gap-3">
           <a href="/" className="text-xs font-bold text-[#008080] hover:underline bg-teal-50 px-3 py-1.5 rounded-lg border border-teal-200">
             View Live Website →
           </a>
+          <button onClick={handleLogout} className="text-xs font-bold text-rose-600 bg-rose-50 px-3 py-1.5 rounded-lg border border-rose-200 hover:bg-rose-100 transition">
+            Log Out
+          </button>
         </div>
       </header>
 
@@ -908,7 +955,7 @@ export default function AdminPanel() {
             onClick={() => setActiveTab('appointments')}
             className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl font-bold text-sm transition ${activeTab === 'appointments' ? 'bg-[#008080] text-white shadow-sm' : 'text-slate-600 hover:bg-slate-50'}`}
           >
-            <span>📋</span> Appointments ({appointments.filter(a => a.patient_type !== 'Emergency' && (!a.booking_date || a.booking_date >= todayDateStr)).length})
+            <span>📋</span> Appointments
           </button>
           <button 
             onClick={() => setActiveTab('booking')}
@@ -932,7 +979,7 @@ export default function AdminPanel() {
             onClick={() => setActiveTab('lab-reports')}
             className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl font-bold text-sm transition ${activeTab === 'lab-reports' ? 'bg-[#008080] text-white shadow-sm' : 'text-slate-600 hover:bg-slate-50'}`}
           >
-            <span>🧪</span> Lab & Reports ({labReports.length})
+            <span>🧪</span> Lab & Reports
           </button>
         </aside>
 
@@ -941,10 +988,7 @@ export default function AdminPanel() {
           {activeTab === 'doctors' && (
             <div>
               <div className="flex justify-between items-center mb-6">
-                <div>
-                  <h2 className="text-xl font-black text-slate-900">Doctor List ({doctors.length})</h2>
-                  <p className="text-xs text-emerald-600 font-semibold">✓ Auto-Synced with Main Website & Database</p>
-                </div>
+                <h2 className="text-xl font-black text-slate-900">Doctor List ({doctors.length})</h2>
                 <button 
                   onClick={() => { resetDocForm(); setIsAddModalOpen(true) }}
                   className="bg-[#008080] hover:bg-[#006666] text-white px-4 py-2 rounded-xl font-bold text-sm transition shadow-sm flex items-center gap-2"
@@ -960,8 +1004,6 @@ export default function AdminPanel() {
                       <th className="p-3">NO</th>
                       <th className="p-3">Doctor Name & Picture</th>
                       <th className="p-3">Specialization</th>
-                      <th className="p-3">Schedule Days</th>
-                      <th className="p-3">Fee</th>
                       <th className="p-3">Status</th>
                       <th className="p-3 text-right">Action</th>
                     </tr>
@@ -977,18 +1019,11 @@ export default function AdminPanel() {
                             onError={(e: any) => { e.target.src = "/doctors/doctor-1.png" }}
                             className="w-10 h-10 rounded-full object-cover border object-top" 
                           />
-                          <div>
-                            <div className="font-bold text-slate-900">{doc.name}</div>
-                            <div className="text-xs text-slate-500">{doc.degree}</div>
-                          </div>
+                          <span className="font-bold text-slate-900">{doc.name}</span>
                         </td>
-                        <td className="p-3 text-slate-700 font-semibold">{doc.specialization}</td>
-                        <td className="p-3 text-xs text-slate-600">
-                          {parseDoctorDaysArray(doc.days).join(', ')}
-                        </td>
-                        <td className="p-3 text-xs font-bold text-slate-800">{doc.follow_up_fee || doc.fee || '600 BDT'}</td>
+                        <td className="p-3 text-slate-600 font-semibold">{doc.specialization}</td>
                         <td className="p-3">
-                          <span className={`px-2.5 py-1 rounded-md text-xs font-bold ${doc.status === 'Absent' ? 'bg-rose-100 text-rose-700' : 'bg-emerald-100 text-emerald-700'}`}>
+                          <span className="px-2.5 py-1 rounded-md text-xs font-bold bg-sky-100 text-sky-700">
                             {doc.status || 'Present'}
                           </span>
                         </td>
@@ -1023,7 +1058,7 @@ export default function AdminPanel() {
                   <h2 className="text-xl font-black text-slate-900">
                     {activeTab === 'quick-reserve-list' ? 'Quick Reserve List' : 'Appointments'} ({filteredAppointments.length})
                   </h2>
-                  <p className="text-xs text-slate-500">Showing active bookings from {todayDateStr} onwards (Past bookings auto-deleted)</p>
+                  <p className="text-xs text-slate-500">Review patient bookings</p>
                 </div>
                 <button 
                   onClick={downloadPDFReport}
@@ -1056,7 +1091,7 @@ export default function AdminPanel() {
                       onChange={e => setFilterDateMode(e.target.value)}
                       className="w-full border rounded-lg px-3 py-1.5 text-xs bg-white font-medium"
                     >
-                      <option value="all">All Upcoming Dates</option>
+                      <option value="all">All Dates (Aksathe)</option>
                       {getNext7Days().map(dateStr => (
                         <option key={dateStr} value={dateStr}>{dateStr}</option>
                       ))}
@@ -1077,7 +1112,7 @@ export default function AdminPanel() {
               )}
 
               {filteredAppointments.length === 0 ? (
-                <p className="text-sm text-slate-500 text-center py-6">No upcoming appointments found.</p>
+                <p className="text-sm text-slate-500 text-center py-6">No records found.</p>
               ) : (
                 <div className="overflow-x-auto">
                   <table className="w-full text-left border-collapse">
@@ -1132,7 +1167,7 @@ export default function AdminPanel() {
 
           {activeTab === 'booking' && (
             <div className="max-w-xl mx-auto">
-              <h2 className="text-xl font-black text-slate-900 mb-4">Book Appointment</h2>
+              <h2 className="text-xl font-black text-slate-900 mb-4">Book Appointment (Main Page Style)</h2>
               {bookingSubmitted ? (
                 <div className="text-center py-8">
                   <div className="w-16 h-16 bg-emerald-100 text-emerald-600 rounded-full flex items-center justify-center mx-auto text-3xl mb-4 font-bold">✓</div>
@@ -1183,7 +1218,7 @@ export default function AdminPanel() {
                       <p className="font-bold text-slate-900 text-sm">{selectedAdminDoctor.name}</p>
                       <p className="text-slate-700 font-semibold">{selectedAdminDoctor.degree}</p>
                       <div className="text-[11px] font-bold text-[#008080]">
-                        <span>Days: {parseDoctorDaysArray(selectedAdminDoctor.days).join(', ')}</span><br/>
+                        <span>Days: {selectedAdminDoctor.days?.join(', ')}</span><br/>
                         <span>Sitting Hours: {selectedAdminDoctor.sitting_hours}</span>
                       </div>
                     </div>
@@ -1348,7 +1383,6 @@ export default function AdminPanel() {
             </div>
           )}
 
-          {/* ==================== FULLY FUNCTIONAL LAB & REPORTS TAB ==================== */}
           {activeTab === 'lab-reports' && (
             <div>
               <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center mb-6 gap-3">
@@ -1364,7 +1398,6 @@ export default function AdminPanel() {
                 </button>
               </div>
 
-              {/* Stats & Search Bar */}
               <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 mb-5">
                 <div className="bg-teal-50/70 border border-teal-200 rounded-xl p-3.5 flex justify-between items-center">
                   <div>
@@ -1511,7 +1544,6 @@ export default function AdminPanel() {
         </main>
       </div>
 
-      {/* ==================== LAB REPORT ADD / EDIT MODAL ==================== */}
       {isLabModalOpen && (
         <div className="fixed inset-0 bg-black/50 backdrop-blur-xs flex items-center justify-center p-4 z-50 overflow-y-auto">
           <div className="bg-white rounded-2xl max-w-2xl w-full p-6 sm:p-8 shadow-2xl relative max-h-[92vh] overflow-y-auto">
@@ -1663,13 +1695,13 @@ export default function AdminPanel() {
                   rows={4}
                   value={labForm.report_summary}
                   onChange={e => setLabForm({...labForm, report_summary: e.target.value})}
-                  placeholder="Enter test values, parameters, or clinical remarks (e.g. Hemoglobin: 14.2 g/dL, WBC: 7,500 /cmm, Impression: Normal study)..."
+                  placeholder="Enter test values, parameters, or clinical remarks..."
                   className="w-full border rounded-xl p-3 text-xs mt-1 font-mono outline-none focus:ring-2 focus:ring-teal-500"
                 />
               </div>
 
               <div className="bg-slate-50 p-4 rounded-xl border border-slate-200">
-                <label className="text-xs font-bold text-slate-800 block mb-1">Upload Scanned Report PDF or Image (Optional - PC or Mobile)</label>
+                <label className="text-xs font-bold text-slate-800 block mb-1">Upload Scanned Report PDF or Image (Optional)</label>
                 <input 
                   type="file" 
                   accept=".pdf,image/*"
@@ -1712,7 +1744,6 @@ export default function AdminPanel() {
           <div className="bg-white rounded-2xl max-w-2xl w-full p-6 sm:p-8 shadow-2xl relative max-h-[90vh] overflow-y-auto">
             <button onClick={() => setIsAddModalOpen(false)} className="absolute top-4 right-4 text-slate-400 hover:text-slate-600 font-bold text-lg">✕</button>
             <h3 className="text-xl font-black text-slate-900 mb-1">{isEditMode ? 'Edit Doctor & Schedule' : 'Add New Doctor'}</h3>
-            <p className="text-xs text-slate-500 mb-4">All details directly update and lock accurately in database.</p>
             
             <form onSubmit={handleSaveDoctor} className="space-y-4">
               <div className="grid grid-cols-2 gap-3">
@@ -1768,7 +1799,7 @@ export default function AdminPanel() {
               </div>
 
               <div className="bg-slate-50 p-4 rounded-xl border border-slate-200">
-                <label className="text-xs font-bold text-slate-800 block mb-2">Doctor Picture (Upload from PC or Mobile)</label>
+                <label className="text-xs font-bold text-slate-800 block mb-2">Doctor Picture</label>
                 <div className="flex items-center gap-4">
                   <img 
                     src={docForm.image_url || "/doctors/doctor-1.png"} 
@@ -1783,15 +1814,12 @@ export default function AdminPanel() {
                       onChange={handleImageFileChange}
                       className="text-xs file:mr-3 file:py-2 file:px-4 file:rounded-full file:border-0 file:text-xs file:font-bold file:bg-[#008080] file:text-white hover:file:bg-[#006666] cursor-pointer"
                     />
-                    <p className="text-[11px] text-slate-400 mt-1 truncate max-w-xs">
-                      Current Path: {docForm.image_url?.substring(0, 40)}
-                    </p>
                   </div>
                 </div>
               </div>
 
               <div className="border-t pt-3">
-                <label className="text-xs font-extrabold text-slate-800 block mb-2">Available Days & Time Slots (ডাক্তার কোন কোন বার বসেন টিক দিন)</label>
+                <label className="text-xs font-extrabold text-slate-800 block mb-2">Available Days & Time Slots</label>
                 <div className="space-y-2">
                   {daysOfWeek.map(day => (
                     <div key={day} className="flex items-center justify-between bg-slate-50 p-2.5 rounded-xl border">
@@ -1810,16 +1838,16 @@ export default function AdminPanel() {
                             type="text" 
                             value={docForm.schedule[day].start}
                             onChange={e => handleTimeChange(day, 'start', e.target.value)}
-                            placeholder="Start Time"
-                            className="border rounded-lg px-2 py-1 text-xs w-24 bg-white"
+                            placeholder="Start"
+                            className="border rounded-lg px-2 py-1 text-xs w-20 bg-white"
                           />
                           <span className="text-xs text-slate-500">to</span>
                           <input 
                             type="text" 
                             value={docForm.schedule[day].end}
                             onChange={e => handleTimeChange(day, 'end', e.target.value)}
-                            placeholder="End Time"
-                            className="border rounded-lg px-2 py-1 text-xs w-24 bg-white"
+                            placeholder="End"
+                            className="border rounded-lg px-2 py-1 text-xs w-20 bg-white"
                           />
                         </div>
                       )}
@@ -1829,7 +1857,7 @@ export default function AdminPanel() {
               </div>
 
               <button type="submit" className="w-full bg-[#008080] hover:bg-[#006666] text-white py-3 rounded-xl font-bold text-sm transition shadow-md mt-4">
-                {isEditMode ? 'Update Doctor in Database' : 'Save Doctor in Database'}
+                {isEditMode ? 'Update Doctor' : 'Save Doctor'}
               </button>
             </form>
           </div>
