@@ -269,6 +269,7 @@ export default function Home() {
     setIsModalOpen(true)
   }
 
+  // Exact Sequential Serial (#4, #5, #6, #7...) matching Admin Panel 100%
   async function handleBookingSubmit(e: React.FormEvent) {
     e.preventDefault()
     if (formData.phone.length !== 11) { alert('Phone number must be exactly 11 digits.'); return; }
@@ -278,14 +279,16 @@ export default function Home() {
     }
 
     try {
-      const { count } = await supabase
+      const { data: existingBookings } = await supabase
         .from('bookings')
-        .select('*', { count: 'exact', head: true })
+        .select('id')
         .eq('doctor_id', selectedDoctor.id.toString())
         .eq('booking_date', formData.booking_date)
 
-      const nextSerial = (count || 0) + 1
+      const activeListCount = existingBookings ? existingBookings.length : 0
+      const nextSerial = 4 + activeListCount
       const serialNumStr = `#${nextSerial}`
+      const docFee = selectedDoctor.fee || selectedDoctor.follow_up_fee || '500 BDT'
 
       const { error } = await supabase.from('bookings').insert({
         patient_name: formData.name,
@@ -301,6 +304,8 @@ export default function Home() {
 
       if (error) throw error
 
+      const appointmentSms = `Dear ${formData.name}, your appointment with ${selectedDoctor.name} on ${formData.booking_date} (${selectedDoctor.sitting_hours}) is confirmed. Serial: ${serialNumStr}. Fee: ${docFee}.\nThank you for choosing Delta Health Care Jatrabari Ltd.`
+
       try {
         await fetch('https://client.giosms.com/api/v1/send', {
           method: 'POST',
@@ -311,7 +316,7 @@ export default function Home() {
           },
           body: JSON.stringify({
             to: `88${formData.phone}`,
-            message: `Delta Health Care Jatrabari Ltd.\nDear ${formData.name}, your appointment with ${selectedDoctor.name} on ${formData.booking_date} (${selectedDoctor.sitting_hours}) is confirmed. Serial: ${serialNumStr}. Fee: ${selectedDoctor.fee || selectedDoctor.follow_up_fee || '500 BDT'}.\nLocation Map: https://share.google/Gr8O0DTGxw96MwyZp`,
+            message: appointmentSms,
             sender_id: '8809666720320',
             type: 'transactional'
           })
@@ -324,7 +329,7 @@ export default function Home() {
         ...formData,
         doctorName: selectedDoctor.name,
         doctorDegree: selectedDoctor.degree,
-        fee: selectedDoctor.fee || selectedDoctor.follow_up_fee || "500 BDT",
+        fee: docFee,
         serialNo: serialNumStr,
         bookingTime: new Date().toLocaleString()
       }
@@ -355,7 +360,7 @@ export default function Home() {
         status: 'Confirmed'
       })
 
-      const customSmsMessage = `Dear Patient/Attendant, your '${quickReserveType}' booking has been successfully confirmed for ${todayStr}. Thank you for choosing Delta Health Care Jatrabari Ltd.For more information Call: 09666720320\nLocation Map: https://share.google/Gr8O0DTGxw96MwyZp`
+      const customSmsMessage = `Dear ${quickForm.name}, your emergency slot (${quickReserveType}) is confirmed. Serial: EQ#${serialNumInt}. Thank you for choosing Delta Health Care Jatrabari Ltd.`
 
       try {
         await fetch('https://client.giosms.com/api/v1/send', {
@@ -463,7 +468,7 @@ export default function Home() {
               <p class="addr">169/1-B, West Dholaipar, Jatrabari, Dhaka | Hotline: 09666720320</p>
             </div>
             <div style="text-align: right;">
-              <div style="font-size: 16px; font-weight: 900; color: #008080;">Bill / Invoice: ${report.invoice_no}</div>
+              <div style="font-size: 16px; font-weight: 900; color: #008080;">Bill No: ${report.invoice_no}</div>
               <div style="font-size: 11px; color: #64748b;">Date: ${report.test_date}</div>
               <div style="font-size: 11px; font-weight: 700; color: #059669;">Status: ${report.delivery_status}</div>
             </div>
@@ -609,7 +614,7 @@ export default function Home() {
       </div>
 
       <div className="w-full">
-        {/* Top Header - Guaranteed 100% Equal Width for Bangla & English on ALL devices using Flex Justify-Between */}
+        {/* Top Header - Guaranteed 100% Equal Width for Bangla & English on ALL devices */}
         <header className="bg-gradient-to-r from-teal-50/90 via-white to-teal-50/90 text-slate-800 py-3.5 px-3 sm:px-12 flex flex-row justify-between items-center gap-2 border-b border-teal-100 shadow-xs w-full">
           <div className="flex items-center gap-2.5 sm:gap-3.5">
             <div className="w-10 h-10 sm:w-12 sm:h-12 flex items-center justify-center bg-white rounded-full p-1.5 shadow-xs border border-teal-200 flex-shrink-0">
@@ -644,7 +649,7 @@ export default function Home() {
           </div>
         </header>
 
-        {/* 2nd Row: Sticky Action Buttons Bar (Left Aligned on both Mobile & Desktop) */}
+        {/* 2nd Row: Sticky Action Buttons Bar (Left Aligned) */}
         <div className="sticky top-0 z-30 bg-white/95 backdrop-blur-md shadow-sm border-b border-slate-200 w-full py-2.5 px-3 sm:px-12 flex items-center justify-start">
           <div className="flex items-center justify-start gap-2 sm:gap-3 text-xs font-bold w-full overflow-x-auto scrollbar-hide py-0.5">
             <button 
@@ -670,7 +675,7 @@ export default function Home() {
           </div>
         </div>
 
-        {/* Hero Banner Section (With Angled 3D Picture Frame on both Mobile & Laptop) */}
+        {/* Hero Banner Section */}
         <section className="w-full px-3 sm:px-12 py-3 sm:py-6">
           <div className={`w-full bg-gradient-to-r ${heroSlides[currentSlide].bgGradient} rounded-3xl p-5 sm:p-10 flex flex-col md:flex-row items-center justify-between shadow-xs border ${heroSlides[currentSlide].border} relative overflow-hidden transition-all duration-500`}>
             

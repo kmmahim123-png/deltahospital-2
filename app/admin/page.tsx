@@ -9,7 +9,7 @@ export default function AdminPanel() {
   const [passwordInput, setPasswordInput] = useState('')
   const [showPassword, setShowPassword] = useState(false)
   
-  const [activeTab, setActiveTab] = useState<'doctors' | 'appointments' | 'booking' | 'quick-reserve' | 'quick-reserve-list' | 'lab-reports'>('doctors')
+  const [activeTab, setActiveTab] = useState<'doctors' | 'appointments' | 'edit-serial' | 'booking' | 'quick-reserve' | 'quick-reserve-list' | 'lab-reports'>('doctors')
   const [appointments, setAppointments] = useState<any[]>([])
   const [doctors, setDoctors] = useState<any[]>(sharedDoctors)
 
@@ -19,6 +19,7 @@ export default function AdminPanel() {
   const [isAddModalOpen, setIsAddModalOpen] = useState(false)
   const [isEditMode, setIsEditMode] = useState(false)
   const [currentDocId, setCurrentDocId] = useState<any>(null)
+  const [savingSerialDocId, setSavingSerialDocId] = useState<any>(null)
 
   const daysOfWeek = ['Saturday', 'Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday']
 
@@ -34,6 +35,7 @@ export default function AdminPanel() {
     address: '',
     image_url: '',
     status: 'Present',
+    reserved_slots: 3,
     schedule: daysOfWeek.reduce((acc: any, day) => {
       acc[day] = { active: false, start: '04:00 PM', end: '08:00 PM' }
       return acc
@@ -88,6 +90,20 @@ export default function AdminPanel() {
     return `${year}-${month}-${day}`
   }
 
+  // প্রতিটি ডাক্তারের জন্য কয়টি সিরিয়াল ফাঁকা থাকবে তা বের করার ফাংশন (ডিফল্ট ৩টি)
+  const getDoctorReservedSlots = (doc: any): number => {
+    if (!doc) return 3
+    if (typeof doc.reserved_slots === 'number') return doc.reserved_slots
+    let sched = doc.schedule
+    if (typeof sched === 'string') {
+      try { sched = JSON.parse(sched) } catch { sched = null }
+    }
+    if (sched && typeof sched._reserved_slots === 'number') {
+      return sched._reserved_slots
+    }
+    return 3
+  }
+
   const [labForm, setLabForm] = useState({
     invoice_no: '',
     patient_name: '',
@@ -114,11 +130,15 @@ export default function AdminPanel() {
 
   useEffect(() => {
     if (isAuthenticated) {
-      cleanupPastBookingsAndFetch()
-      fetchDatabaseDoctors()
-      fetchLabReports()
+      loadAdminData()
     }
   }, [isAuthenticated])
+
+  async function loadAdminData() {
+    const loadedDocs = await fetchDatabaseDoctors()
+    await cleanupPastBookingsAndFetch(loadedDocs)
+    await fetchLabReports()
+  }
 
   const handleLogin = (e: React.FormEvent) => {
     e.preventDefault()
@@ -150,8 +170,46 @@ export default function AdminPanel() {
     return result
   }
 
-  async function cleanupPastBookingsAndFetch() {
+  async function fetchDatabaseDoctors() {
     try {
+      const { data } = await supabase.from('doctors').select('*').order('id', { ascending: true })
+      if (data && data.length > 0) {
+        const formatted = data.map((d: any, index: number) => {
+          const fallbackDoc = sharedDoctors.find(
+            s => s.doctor_no?.toString() === d.doctor_no?.toString() || s.name?.toLowerCase().trim() === d.name?.toLowerCase().trim()
+          )
+          const parsedDays = parseDoctorDaysArray(d.days, fallbackDoc?.days || ['Saturday', 'Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday'])
+          const reserved = getDoctorReservedSlots(d)
+
+          return {
+            ...fallbackDoc,
+            ...d,
+            doctor_no: d.doctor_no || String(index + 1),
+            days: parsedDays,
+            follow_up_fee: d.follow_up_fee || d.fee || fallbackDoc?.fee || '600 BDT',
+            fee: d.follow_up_fee || d.fee || fallbackDoc?.fee || '600 BDT',
+            details: d.details || fallbackDoc?.details || '',
+            reserved_slots: reserved
+          }
+        })
+        setDoctors(formatted)
+        return formatted
+      } else {
+        const fallbackFormatted = sharedDoctors.map(d => ({ ...d, reserved_slots: 3 }))
+        setDoctors(fallbackFormatted)
+        return fallbackFormatted
+      }
+    } catch (err) {
+      console.error('Error fetching doctors:', err)
+      setDoctors(sharedDoctors)
+      return sharedDoctors
+    }
+  }
+
+  // প্রতিটি ডাক্তারের নিজস্ব রিজার্ভড সিরিয়াল গ্যাপ অনুযায়ী তার রোগীদের সঠিক সিরিয়াল হিসাব করা
+  async function cleanupPastBookingsAndFetch(currentDoctorsList?: any[]) {
+    try {
+      const activeDocs = currentDoctorsList || doctors
       const todayStr = getTodayBDDate()
       await supabase.from('bookings').delete().lt('booking_date', todayStr)
 
@@ -159,6 +217,7 @@ export default function AdminPanel() {
         .from('bookings')
         .select('*')
         .order('booking_date', { ascending: true })
+        .order('id', { ascending: true })
 
       if (error) throw error
 
@@ -184,8 +243,15 @@ export default function AdminPanel() {
 
         const sortedList: any[] = []
         Object.keys(grouped).forEach(key => {
+          const [docId] = key.split('_')
+          const matchedDoc = activeDocs.find(
+            (d: any) => d.id?.toString() === docId?.toString() || d.doctor_no?.toString() === docId?.toString()
+          )
+          const reservedBlankCount = getDoctorReservedSlots(matchedDoc)
+
           grouped[key].forEach((item: any, index: number) => {
-            sortedList.push({ ...item, computed_serial: index + 1 })
+            const strictSerial = reservedBlankCount + 1 + index
+            sortedList.push({ ...item, computed_serial: strictSerial })
           })
         })
 
@@ -202,33 +268,39 @@ export default function AdminPanel() {
     }
   }
 
-  async function fetchDatabaseDoctors() {
+  // ডাক্তারভেদে কয়টি সিরিয়াল বাদ থাকবে তা ডাটাবেসে সেভ করার ফাংশন
+  const handleUpdateDoctorReservedSlots = async (doc: any, newReservedCount: number) => {
+    setSavingSerialDocId(doc.id)
     try {
-      const { data } = await supabase.from('doctors').select('*').order('id', { ascending: true })
-      if (data && data.length > 0) {
-        const formatted = data.map((d: any, index: number) => {
-          const fallbackDoc = sharedDoctors.find(
-            s => s.doctor_no?.toString() === d.doctor_no?.toString() || s.name?.toLowerCase().trim() === d.name?.toLowerCase().trim()
-          )
-          const parsedDays = parseDoctorDaysArray(d.days, fallbackDoc?.days || ['Saturday', 'Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday'])
-
-          return {
-            ...fallbackDoc,
-            ...d,
-            doctor_no: d.doctor_no || String(index + 1),
-            days: parsedDays,
-            follow_up_fee: d.follow_up_fee || d.fee || fallbackDoc?.fee || '600 BDT',
-            fee: d.follow_up_fee || d.fee || fallbackDoc?.fee || '600 BDT',
-            details: d.details || fallbackDoc?.details || ''
-          }
-        })
-        setDoctors(formatted)
-      } else {
-        setDoctors(sharedDoctors)
+      let currentSchedule: any = doc.schedule
+      if (typeof currentSchedule === 'string') {
+        try { currentSchedule = JSON.parse(currentSchedule) } catch { currentSchedule = {} }
       }
-    } catch (err) {
-      console.error('Error fetching doctors:', err)
-      setDoctors(sharedDoctors)
+      if (!currentSchedule || typeof currentSchedule !== 'object') {
+        currentSchedule = {}
+      }
+
+      const updatedSchedule = {
+        ...currentSchedule,
+        _reserved_slots: Number(newReservedCount)
+      }
+
+      const { error } = await supabase
+        .from('doctors')
+        .update({ schedule: updatedSchedule })
+        .eq('id', doc.id)
+
+      if (error) throw error
+
+      const updatedDoctors = doctors.map(d =>
+        d.id === doc.id ? { ...d, reserved_slots: Number(newReservedCount), schedule: updatedSchedule } : d
+      )
+      setDoctors(updatedDoctors)
+      await cleanupPastBookingsAndFetch(updatedDoctors)
+    } catch (err: any) {
+      alert('Failed to update reserved serials: ' + err.message)
+    } finally {
+      setSavingSerialDocId(null)
     }
   }
 
@@ -364,7 +436,7 @@ export default function AdminPanel() {
 
       if (sendSmsOnLabSave && payload.delivery_status === 'Ready') {
         try {
-          const smsMsg = `Delta Health Care Jatrabari Ltd.\nDear ${payload.patient_name}, your lab report for '${payload.test_name}' (Bill No: ${payload.invoice_no}) is READY. You can download it from our website.\nHotline: 09666720320`
+          const smsMsg = `Dear ${payload.patient_name}, your lab report (Bill No: ${payload.invoice_no}) is READY. You can download it from our website. Thank you for choosing Delta Health Care Jatrabari Ltd.`
           await fetch('https://client.giosms.com/api/v1/send', {
             method: 'POST',
             headers: {
@@ -450,7 +522,7 @@ export default function AdminPanel() {
               <p class="addr">169/1-B, West Dholaipar, Jatrabari, Dhaka | Hotline: 09666720320</p>
             </div>
             <div style="text-align: right;">
-              <div style="font-size: 16px; font-weight: 900; color: #008080;">Bill / Invoice: ${report.invoice_no}</div>
+              <div style="font-size: 16px; font-weight: 900; color: #008080;">Bill No: ${report.invoice_no}</div>
               <div style="font-size: 11px; color: #64748b;">Date: ${report.test_date}</div>
               <div style="font-size: 11px; font-weight: 700; color: #059669;">Status: ${report.delivery_status}</div>
             </div>
@@ -578,6 +650,11 @@ export default function AdminPanel() {
         ? `${docForm.schedule[firstDay].start} - ${docForm.schedule[firstDay].end}`
         : '04:00 PM - 08:00 PM'
 
+      const scheduleWithReserved = {
+        ...docForm.schedule,
+        _reserved_slots: Number(docForm.reserved_slots ?? 3)
+      }
+
       const payload: any = {
         doctor_no: docForm.doctor_no || String(doctors.length + 1),
         name: docForm.name,
@@ -592,7 +669,7 @@ export default function AdminPanel() {
         status: docForm.status,
         days: activeDays,
         sitting_hours: sittingHours,
-        schedule: docForm.schedule,
+        schedule: scheduleWithReserved,
         status_updated_at: new Date().toISOString()
       }
 
@@ -606,7 +683,8 @@ export default function AdminPanel() {
 
       alert('Doctor updated successfully!')
       setIsAddModalOpen(false)
-      fetchDatabaseDoctors()
+      const updatedDocs = await fetchDatabaseDoctors()
+      await cleanupPastBookingsAndFetch(updatedDocs)
     } catch (err: any) {
       alert('Failed to save doctor: ' + err.message)
     }
@@ -632,6 +710,7 @@ export default function AdminPanel() {
       address: '',
       image_url: '/doctors/doctor-1.png',
       status: 'Present',
+      reserved_slots: 3,
       schedule: defaultSchedule
     })
   }
@@ -678,6 +757,7 @@ export default function AdminPanel() {
       address: doc.address || '',
       image_url: doc.image_url || '/doctors/doctor-1.png',
       status: doc.status || 'Present',
+      reserved_slots: getDoctorReservedSlots(doc),
       schedule: initialSchedule
     })
     setIsAddModalOpen(true)
@@ -706,26 +786,30 @@ export default function AdminPanel() {
     try {
       const { error } = await supabase.from('bookings').delete().eq('id', id)
       if (error) throw error
-      setAppointments(appointments.filter(a => a.id !== id))
+      await cleanupPastBookingsAndFetch()
     } catch (err: any) {
       alert('Delete failed: ' + err.message)
     }
   }
 
+  // অ্যাডমিন বুকিংয়ের সময় ওই ডাক্তারের নির্ধারিত রিজার্ভড সিরিয়াল বাদ দিয়ে পরবর্তী সিরিয়াল দেওয়া হবে
   const handleAdminBookingSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
     if (adminBooking.phone.length !== 11) { alert('Phone number must be exactly 11 digits.'); return }
     if (isAdminDoctorAbsent || availableDatesForAdminDoc.length === 0) { alert('Selected doctor is not available.'); return }
 
     try {
-      const { count } = await supabase
+      const { data: existingBookings } = await supabase
         .from('bookings')
-        .select('*', { count: 'exact', head: true })
+        .select('id')
         .eq('doctor_id', selectedAdminDoctor.id.toString())
         .eq('booking_date', adminBooking.booking_date)
 
-      const nextSerial = (count || 0) + 1
+      const activeListCount = existingBookings ? existingBookings.length : 0
+      const reservedBlankCount = getDoctorReservedSlots(selectedAdminDoctor)
+      const nextSerial = reservedBlankCount + 1 + activeListCount
       const serialNumStr = `#${nextSerial}`
+      const docFee = selectedAdminDoctor.follow_up_fee || selectedAdminDoctor.fee || '600 BDT'
 
       const { error } = await supabase.from('bookings').insert({
         patient_name: adminBooking.name,
@@ -741,6 +825,8 @@ export default function AdminPanel() {
 
       if (error) throw error
 
+      const appointmentSms = `Dear ${adminBooking.name}, your appointment with ${selectedAdminDoctor.name} on ${adminBooking.booking_date} (${selectedAdminDoctor.sitting_hours}) is confirmed. Serial: ${serialNumStr}. Fee: ${docFee}.\nThank you for choosing Delta Health Care Jatrabari Ltd.`
+
       try {
         await fetch('https://client.giosms.com/api/v1/send', {
           method: 'POST',
@@ -751,7 +837,7 @@ export default function AdminPanel() {
           },
           body: JSON.stringify({
             to: `88${adminBooking.phone}`,
-            message: `Delta Health Care Jatrabari Ltd.\nDear ${adminBooking.name}, your appointment with ${selectedAdminDoctor.name} on ${adminBooking.booking_date} (${selectedAdminDoctor.sitting_hours}) is confirmed. Serial: ${serialNumStr}. Fee: ${selectedAdminDoctor.follow_up_fee || '600 BDT'}.\nLocation Map: https://share.google/Gr8O0DTGxw96MwyZp`,
+            message: appointmentSms,
             sender_id: '8809666720320',
             type: 'transactional'
           })
@@ -761,7 +847,7 @@ export default function AdminPanel() {
       }
 
       setBookingSubmitted(true)
-      cleanupPastBookingsAndFetch()
+      await cleanupPastBookingsAndFetch()
     } catch (err: any) {
       alert('Booking failed: ' + err.message)
     }
@@ -787,7 +873,7 @@ export default function AdminPanel() {
         status: 'Confirmed'
       })
 
-      const customSmsMessage = `Dear Patient/Attendant, your '${quickReserveType}' booking has been successfully confirmed for ${todayDate}. Thank you for choosing Delta Health Care Jatrabari Ltd.For more information Call: 09666720320\nLocation Map: https://share.google/Gr8O0DTGxw96MwyZp`
+      const customSmsMessage = `Dear ${quickForm.name}, your emergency slot (${quickReserveType}) is confirmed. Serial: EQ#${serialNumInt}. Thank you for choosing Delta Health Care Jatrabari Ltd.`
 
       await fetch('https://client.giosms.com/api/v1/send', {
         method: 'POST',
@@ -805,29 +891,75 @@ export default function AdminPanel() {
       })
 
       setQuickSubmitted(true)
-      cleanupPastBookingsAndFetch()
+      await cleanupPastBookingsAndFetch()
     } catch (err: any) {
       alert('Emergency request failed: ' + err.message)
     }
   }
 
-  // PDF ডাউনলোডে Note কলাম এবং সঠিক বানান "ডেলটা হেলথ্ কেয়ার যাত্রাবাড়ী লিমিটেড" যুক্ত করা হলো
+  const todayDateStr = getTodayBDDate()
+
+  const filteredAppointments = appointments.filter(app => {
+    if (app.booking_date && app.booking_date < todayDateStr) return false
+
+    if (activeTab === 'quick-reserve-list') {
+      return app.patient_type === 'Emergency'
+    }
+    if (activeTab === 'appointments') {
+      if (app.patient_type === 'Emergency') return false
+      const matchDoc = filterDoctor ? app.doctor_id?.toString() === filterDoctor : true
+      const matchDate = filterDateMode !== 'all' ? app.booking_date === filterDateMode : true
+      return matchDoc && matchDate
+    }
+    return true
+  })
+
+  // যখন একজন নির্দিষ্ট ডাক্তার সিলেক্ট করা থাকবে, তখন তার জন্য কয়টি খালি রো দেখাতে হবে তা বের করা
+  const selectedFilterDocObj = filterDoctor
+    ? doctors.find(d => d.id?.toString() === filterDoctor.toString() || d.doctor_no?.toString() === filterDoctor.toString())
+    : null
+  const activeReservedCountForSelectedDoc = selectedFilterDocObj ? getDoctorReservedSlots(selectedFilterDocObj) : 0
+
+  // PDF ডাউনলোডে: All Doctors থাকলে কোনো খালি রো থাকবে না এবং যার যার আসল সিরিয়াল দেখাবে; আর নির্দিষ্ট ডাক্তার সিলেক্ট থাকলে তার খালি রো গুলো উপরে দেখাবে
   const downloadPDFReport = () => {
     const printWindow = window.open('', '', 'left=0,top=0,width=900,height=700')
     if (!printWindow) return
 
+    const blankRowsHtml = (activeTab === 'appointments' && filterDoctor && activeReservedCountForSelectedDoc > 0)
+      ? Array.from({ length: activeReservedCountForSelectedDoc }, (_, i) => i + 1).map(num => `
+          <tr style="height: 28px;">
+            <td>${num}</td>
+            <td></td>
+            <td></td>
+            <td></td>
+            <td>${selectedFilterDocObj?.name || ''}</td>
+            <td>${filterDateMode !== 'all' ? filterDateMode : ''}</td>
+            <td>#${num}</td>
+            <td></td>
+            <td></td>
+          </tr>
+        `).join('')
+      : ''
+
     const rowsHtml = filteredAppointments.map((a, idx) => {
       const matchedDoc = doctors.find(d => d.id?.toString() === a.doctor_id?.toString() || d.doctor_no?.toString() === a.doctor_id?.toString())
       const docName = matchedDoc ? matchedDoc.name : a.doctor_id
+      const displaySL = (activeTab === 'appointments' && filterDoctor)
+        ? activeReservedCountForSelectedDoc + idx + 1
+        : idx + 1
+      const displaySerial = activeTab === 'appointments'
+        ? `#${a.computed_serial || a.serial_number}`
+        : `EQ#${a.serial_number}`
+
       return `
         <tr>
-          <td>${idx + 1}</td>
+          <td>${displaySL}</td>
           <td><b>${a.patient_name}</b></td>
           <td>${a.phone}</td>
           <td>${a.age || '-'}</td>
           <td>${docName}</td>
           <td>${a.booking_date}</td>
-          <td>#${a.computed_serial || a.serial_number}</td>
+          <td><b>${displaySerial}</b></td>
           <td>${a.symptoms || '-'}</td>
           <td>${a.patient_type === 'Admin' ? 'Admin' : a.patient_type === 'Emergency' ? 'Quick Reserve' : 'Online'}</td>
         </tr>
@@ -853,7 +985,7 @@ export default function AdminPanel() {
         <body>
           <div class="header">
             <h2>ডেলটা হেলথ্ কেয়ার যাত্রাবাড়ী লিমিটেড</h2>
-            <p>Official Appointments List & Summary Report</p>
+            <p>Official Appointments List & Summary Report ${selectedFilterDocObj ? `— ${selectedFilterDocObj.name}` : '(All Doctors)'}</p>
             <p>Generated Date: ${new Date().toLocaleDateString()}</p>
           </div>
           <table>
@@ -871,6 +1003,7 @@ export default function AdminPanel() {
               </tr>
             </thead>
             <tbody>
+              ${blankRowsHtml}
               ${rowsHtml || '<tr><td colspan="9" style="text-align:center;">No appointments found.</td></tr>'}
             </tbody>
           </table>
@@ -884,23 +1017,6 @@ export default function AdminPanel() {
     printWindow.focus()
     setTimeout(() => { printWindow.print() }, 500)
   }
-
-  const todayDateStr = getTodayBDDate()
-
-  const filteredAppointments = appointments.filter(app => {
-    if (app.booking_date && app.booking_date < todayDateStr) return false
-
-    if (activeTab === 'quick-reserve-list') {
-      return app.patient_type === 'Emergency'
-    }
-    if (activeTab === 'appointments') {
-      if (app.patient_type === 'Emergency') return false
-      const matchDoc = filterDoctor ? app.doctor_id?.toString() === filterDoctor : true
-      const matchDate = filterDateMode !== 'all' ? app.booking_date === filterDateMode : true
-      return matchDoc && matchDate
-    }
-    return true
-  })
 
   const filteredLabReports = labReports.filter(rep => {
     const matchesStatus = labFilterStatus === 'All' ? true : rep.delivery_status === labFilterStatus
@@ -916,7 +1032,7 @@ export default function AdminPanel() {
   if (!isAuthenticated) {
     return (
       <div className="min-h-screen bg-slate-100 flex items-center justify-center p-4">
-        <div className="bg-white p-8 rounded-2xl shadow-xl max-w-md w-full border border-slate-200">
+        <div className="bg-white p-6 sm:p-8 rounded-2xl shadow-xl max-w-md w-full border border-slate-200">
           <div className="flex items-center gap-3 mb-6">
             <div className="w-10 h-10 bg-teal-50 rounded-xl p-1 flex items-center justify-center border">
               <img src="/logo.png" alt="Logo" className="w-full h-full object-contain" />
@@ -962,148 +1078,225 @@ export default function AdminPanel() {
   }
 
   return (
-    <div className="min-h-screen bg-slate-100 flex flex-col font-sans text-slate-900">
-      <header className="bg-white border-b border-slate-200 py-3.5 px-6 sm:px-12 flex justify-between items-center shadow-xs">
-        <div className="flex items-center gap-3">
-          <div className="w-10 h-10 flex items-center justify-center bg-white rounded-xl p-1 border">
+    <div className="min-h-screen bg-slate-100 flex flex-col font-sans text-slate-900 w-full overflow-x-hidden">
+      {/* Mobile-Optimized Admin Header */}
+      <header className="bg-white border-b border-slate-200 py-3 px-3 sm:px-10 flex flex-wrap justify-between items-center gap-2 shadow-xs">
+        <div className="flex items-center gap-2.5">
+          <div className="w-9 h-9 sm:w-10 sm:h-10 flex items-center justify-center bg-white rounded-xl p-1 border flex-shrink-0">
             <img src="/logo.png" alt="Logo" className="w-full h-full object-contain" />
           </div>
           <div>
-            <h2 className="text-[10px] font-bold text-[#008080]">ডেলটা হেলথ্ কেয়ার যাত্রাবাড়ী লিমিটেড</h2>
-            <h1 className="font-black text-sm text-slate-900">JATRABARI LTD. (Admin Dashboard)</h1>
+            <h2 className="text-[11px] sm:text-xs font-bold text-[#008080] leading-tight">ডেলটা হেলথ্ কেয়ার যাত্রাবাড়ী লিমিটেড</h2>
+            <h1 className="font-black text-xs sm:text-sm text-slate-900 leading-tight">JATRABARI LTD. (Admin)</h1>
           </div>
         </div>
-        <div className="flex items-center gap-3">
-          <a href="/" className="text-xs font-bold text-[#008080] hover:underline bg-teal-50 px-3 py-1.5 rounded-lg border border-teal-200">
-            View Live Website →
+        <div className="flex items-center gap-2">
+          <a href="/" className="text-[11px] sm:text-xs font-bold text-[#008080] hover:underline bg-teal-50 px-2.5 sm:px-3 py-1.5 rounded-lg border border-teal-200 whitespace-nowrap">
+            Live Website →
           </a>
-          <button onClick={handleLogout} className="text-xs font-bold text-rose-600 bg-rose-50 px-3 py-1.5 rounded-lg border border-rose-200 hover:bg-rose-100 transition">
+          <button onClick={handleLogout} className="text-[11px] sm:text-xs font-bold text-rose-600 bg-rose-50 px-2.5 sm:px-3 py-1.5 rounded-lg border border-rose-200 hover:bg-rose-100 transition whitespace-nowrap">
             Log Out
           </button>
         </div>
       </header>
 
-      <div className="flex flex-1 max-w-7xl w-full mx-auto p-6 gap-6">
-        <aside className="w-64 bg-white border border-slate-200 rounded-2xl p-4 h-fit shadow-xs space-y-2">
+      {/* Mobile-First Layout */}
+      <div className="flex flex-col lg:flex-row flex-1 max-w-7xl w-full mx-auto p-3 sm:p-6 gap-4 sm:gap-6">
+        <aside className="w-full lg:w-64 bg-white border border-slate-200 rounded-2xl p-2 sm:p-4 h-fit shadow-xs flex lg:flex-col gap-1.5 sm:gap-2 overflow-x-auto scrollbar-hide">
           <button 
             onClick={() => setActiveTab('doctors')}
-            className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl font-bold text-sm transition ${activeTab === 'doctors' ? 'bg-[#008080] text-white shadow-sm' : 'text-slate-600 hover:bg-slate-50'}`}
+            className={`flex items-center gap-2 px-3.5 py-2.5 sm:px-4 sm:py-3 rounded-xl font-bold text-xs sm:text-sm transition whitespace-nowrap flex-shrink-0 ${activeTab === 'doctors' ? 'bg-[#008080] text-white shadow-sm' : 'text-slate-600 hover:bg-slate-50 bg-slate-50/60 lg:bg-transparent'}`}
           >
             <span>👨‍⚕️</span> Doctor List ({doctors.length})
           </button>
           <button 
             onClick={() => setActiveTab('appointments')}
-            className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl font-bold text-sm transition ${activeTab === 'appointments' ? 'bg-[#008080] text-white shadow-sm' : 'text-slate-600 hover:bg-slate-50'}`}
+            className={`flex items-center gap-2 px-3.5 py-2.5 sm:px-4 sm:py-3 rounded-xl font-bold text-xs sm:text-sm transition whitespace-nowrap flex-shrink-0 ${activeTab === 'appointments' ? 'bg-[#008080] text-white shadow-sm' : 'text-slate-600 hover:bg-slate-50 bg-slate-50/60 lg:bg-transparent'}`}
           >
             <span>📋</span> Appointments
           </button>
           <button 
+            onClick={() => setActiveTab('edit-serial')}
+            className={`flex items-center gap-2 px-3.5 py-2.5 sm:px-4 sm:py-3 rounded-xl font-bold text-xs sm:text-sm transition whitespace-nowrap flex-shrink-0 ${activeTab === 'edit-serial' ? 'bg-[#008080] text-white shadow-sm' : 'text-slate-600 hover:bg-slate-50 bg-slate-50/60 lg:bg-transparent'}`}
+          >
+            <span>⚙️</span> Edit Appointment Serial
+          </button>
+          <button 
             onClick={() => setActiveTab('booking')}
-            className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl font-bold text-sm transition ${activeTab === 'booking' ? 'bg-[#008080] text-white shadow-sm' : 'text-slate-600 hover:bg-slate-50'}`}
+            className={`flex items-center gap-2 px-3.5 py-2.5 sm:px-4 sm:py-3 rounded-xl font-bold text-xs sm:text-sm transition whitespace-nowrap flex-shrink-0 ${activeTab === 'booking' ? 'bg-[#008080] text-white shadow-sm' : 'text-slate-600 hover:bg-slate-50 bg-slate-50/60 lg:bg-transparent'}`}
           >
             <span>➕</span> Booking Appointment
           </button>
           <button 
             onClick={() => setActiveTab('quick-reserve')}
-            className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl font-bold text-sm transition ${activeTab === 'quick-reserve' ? 'bg-[#008080] text-white shadow-sm' : 'text-slate-600 hover:bg-slate-50'}`}
+            className={`flex items-center gap-2 px-3.5 py-2.5 sm:px-4 sm:py-3 rounded-xl font-bold text-xs sm:text-sm transition whitespace-nowrap flex-shrink-0 ${activeTab === 'quick-reserve' ? 'bg-[#008080] text-white shadow-sm' : 'text-slate-600 hover:bg-slate-50 bg-slate-50/60 lg:bg-transparent'}`}
           >
             <span>⚡</span> Quick Reserve Form
           </button>
           <button 
             onClick={() => setActiveTab('quick-reserve-list')}
-            className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl font-bold text-sm transition ${activeTab === 'quick-reserve-list' ? 'bg-[#008080] text-white shadow-sm' : 'text-slate-600 hover:bg-slate-50'}`}
+            className={`flex items-center gap-2 px-3.5 py-2.5 sm:px-4 sm:py-3 rounded-xl font-bold text-xs sm:text-sm transition whitespace-nowrap flex-shrink-0 ${activeTab === 'quick-reserve-list' ? 'bg-[#008080] text-white shadow-sm' : 'text-slate-600 hover:bg-slate-50 bg-slate-50/60 lg:bg-transparent'}`}
           >
             <span>🚨</span> Quick Reserve List
           </button>
           <button 
             onClick={() => setActiveTab('lab-reports')}
-            className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl font-bold text-sm transition ${activeTab === 'lab-reports' ? 'bg-[#008080] text-white shadow-sm' : 'text-slate-600 hover:bg-slate-50'}`}
+            className={`flex items-center gap-2 px-3.5 py-2.5 sm:px-4 sm:py-3 rounded-xl font-bold text-xs sm:text-sm transition whitespace-nowrap flex-shrink-0 ${activeTab === 'lab-reports' ? 'bg-[#008080] text-white shadow-sm' : 'text-slate-600 hover:bg-slate-50 bg-slate-50/60 lg:bg-transparent'}`}
           >
             <span>🧪</span> Lab & Reports ({labReports.length})
           </button>
         </aside>
 
-        <main className="flex-1 bg-white border border-slate-200 rounded-2xl p-6 shadow-xs">
+        <main className="flex-1 bg-white border border-slate-200 rounded-2xl p-3.5 sm:p-6 shadow-xs w-full overflow-hidden">
           
           {activeTab === 'doctors' && (
             <div>
-              <div className="flex justify-between items-center mb-6">
+              <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center mb-5 gap-3">
                 <div>
-                  <h2 className="text-xl font-black text-slate-900">Doctor List ({doctors.length})</h2>
-                  <p className="text-xs text-slate-500">Click on Present / Absent badge to toggle doctor availability</p>
+                  <h2 className="text-lg sm:text-xl font-black text-slate-900">Doctor List ({doctors.length})</h2>
+                  <p className="text-xs text-slate-500">Tap on Present / Absent badge to toggle doctor availability</p>
                 </div>
                 <button 
                   onClick={() => { resetDocForm(); setIsAddModalOpen(true) }}
-                  className="bg-[#008080] hover:bg-[#006666] text-white px-4 py-2 rounded-xl font-bold text-sm transition shadow-sm flex items-center gap-2"
+                  className="bg-[#008080] hover:bg-[#006666] text-white px-4 py-2 rounded-xl font-bold text-xs sm:text-sm transition shadow-sm flex items-center gap-1.5 w-full sm:w-auto justify-center"
                 >
                   <span>+</span> Add Doctor
                 </button>
               </div>
 
-              <div className="overflow-x-auto">
-                <table className="w-full text-left border-collapse">
+              <div className="overflow-x-auto -mx-3.5 sm:mx-0 px-3.5 sm:px-0">
+                <table className="w-full text-left border-collapse min-w-[650px]">
+                  <thead>
+                    <tr className="border-b text-xs font-bold text-slate-600 bg-slate-50">
+                      <th className="p-2.5 sm:p-3">NO</th>
+                      <th className="p-2.5 sm:p-3">Doctor Name & Picture</th>
+                      <th className="p-2.5 sm:p-3">Specialization</th>
+                      <th className="p-2.5 sm:p-3">Reserved Blank</th>
+                      <th className="p-2.5 sm:p-3">Fee</th>
+                      <th className="p-2.5 sm:p-3">Status</th>
+                      <th className="p-2.5 sm:p-3 text-right">Action</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y text-xs sm:text-sm">
+                    {doctors.map((doc, idx) => {
+                      const reservedCount = getDoctorReservedSlots(doc)
+                      return (
+                        <tr key={doc.id || idx} className="hover:bg-slate-50">
+                          <td className="p-2.5 sm:p-3 font-bold text-slate-700">{idx + 1}</td>
+                          <td className="p-2.5 sm:p-3 flex items-center gap-2.5">
+                            <img 
+                              src={doc.image_url || "/doctors/doctor-1.png"} 
+                              alt={doc.name} 
+                              onError={(e: any) => { e.target.src = "/doctors/doctor-1.png" }}
+                              className="w-9 h-9 sm:w-10 sm:h-10 rounded-full object-cover border object-top flex-shrink-0" 
+                            />
+                            <div>
+                              <div className="font-bold text-slate-900">{doc.name}</div>
+                              <div className="text-[11px] text-slate-500 line-clamp-1">{doc.degree}</div>
+                            </div>
+                          </td>
+                          <td className="p-2.5 sm:p-3 text-slate-600 font-semibold">{doc.specialization}</td>
+                          <td className="p-2.5 sm:p-3">
+                            <span className="bg-teal-50 text-[#008080] border border-teal-200 px-2.5 py-1 rounded-lg text-[11px] font-bold whitespace-nowrap">
+                              First {reservedCount} Blank (Starts #{reservedCount + 1})
+                            </span>
+                          </td>
+                          <td className="p-2.5 sm:p-3 text-xs font-bold text-slate-800 whitespace-nowrap">{doc.follow_up_fee || doc.fee || '600 BDT'}</td>
+                          <td className="p-2.5 sm:p-3">
+                            <button
+                              type="button"
+                              onClick={() => handleToggleDoctorStatus(doc)}
+                              title="Click to switch between Present & Absent"
+                              className={`px-2.5 py-1 rounded-full text-[11px] font-extrabold transition cursor-pointer shadow-xs whitespace-nowrap ${
+                                doc.status === 'Absent'
+                                  ? 'bg-rose-600 text-white hover:bg-rose-700'
+                                  : 'bg-emerald-100 text-emerald-700 hover:bg-emerald-200'
+                              }`}
+                            >
+                              {doc.status === 'Absent' ? '🔴 Absent' : '🟢 Present'}
+                            </button>
+                          </td>
+                          <td className="p-2.5 sm:p-3 text-right space-x-1.5 whitespace-nowrap">
+                            <button 
+                              onClick={() => handleEditClick(doc)}
+                              className="bg-slate-100 hover:bg-slate-200 text-slate-700 p-2 rounded-lg text-xs font-bold transition"
+                              title="Edit Schedule & Info"
+                            >
+                              ✏️
+                            </button>
+                            <button 
+                              onClick={() => setDeleteModalDoc(doc)}
+                              className="bg-rose-50 hover:bg-rose-100 text-rose-600 p-2 rounded-lg text-xs font-bold transition"
+                              title="Delete Doctor"
+                            >
+                              🗑️
+                            </button>
+                          </td>
+                        </tr>
+                      )
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          )}
+
+          {/* নতুন ট্যাব: প্রতিটি ডাক্তারের জন্য আলাদা করে কয়টি সিরিয়াল ফাঁকা থাকবে তা এডিট করার অপশন */}
+          {activeTab === 'edit-serial' && (
+            <div>
+              <div className="mb-5">
+                <h2 className="text-lg sm:text-xl font-black text-slate-900">Edit Appointment Serial (Doctor-wise)</h2>
+                <p className="text-xs text-slate-500 mt-0.5">
+                  Select how many initial serials to keep blank/reserved for each doctor (e.g., if set to 3, patient serials start from #4; if set to 2, serials start from #3).
+                </p>
+              </div>
+
+              <div className="overflow-x-auto -mx-3.5 sm:mx-0 px-3.5 sm:px-0">
+                <table className="w-full text-left border-collapse min-w-[600px]">
                   <thead>
                     <tr className="border-b text-xs font-bold text-slate-600 bg-slate-50">
                       <th className="p-3">NO</th>
-                      <th className="p-3">Doctor Name & Picture</th>
+                      <th className="p-3">Doctor Name</th>
                       <th className="p-3">Specialization</th>
-                      <th className="p-3">Schedule Days</th>
-                      <th className="p-3">Fee</th>
-                      <th className="p-3">Status (Click to Change)</th>
-                      <th className="p-3 text-right">Action</th>
+                      <th className="p-3">Reserved Blank Serials</th>
+                      <th className="p-3">Patient Booking Starts From</th>
                     </tr>
                   </thead>
-                  <tbody className="divide-y text-sm">
-                    {doctors.map((doc, idx) => (
-                      <tr key={doc.id || idx} className="hover:bg-slate-50">
-                        <td className="p-3 font-bold text-slate-700">{idx + 1}</td>
-                        <td className="p-3 flex items-center gap-3">
-                          <img 
-                            src={doc.image_url || "/doctors/doctor-1.png"} 
-                            alt={doc.name} 
-                            onError={(e: any) => { e.target.src = "/doctors/doctor-1.png" }}
-                            className="w-10 h-10 rounded-full object-cover border object-top" 
-                          />
-                          <div>
-                            <div className="font-bold text-slate-900">{doc.name}</div>
-                            <div className="text-xs text-slate-500">{doc.degree}</div>
-                          </div>
-                        </td>
-                        <td className="p-3 text-slate-600 font-semibold">{doc.specialization}</td>
-                        <td className="p-3 text-xs text-slate-600">{parseDoctorDaysArray(doc.days).join(', ')}</td>
-                        <td className="p-3 text-xs font-bold text-slate-800">{doc.follow_up_fee || doc.fee || '600 BDT'}</td>
-                        <td className="p-3">
-                          <button
-                            type="button"
-                            onClick={() => handleToggleDoctorStatus(doc)}
-                            title="Click to switch between Present & Absent"
-                            className={`px-3 py-1 rounded-full text-xs font-extrabold transition cursor-pointer shadow-xs ${
-                              doc.status === 'Absent'
-                                ? 'bg-rose-600 text-white hover:bg-rose-700'
-                                : 'bg-emerald-100 text-emerald-700 hover:bg-emerald-200'
-                            }`}
-                          >
-                            {doc.status === 'Absent' ? '🔴 Absent' : '🟢 Present'}
-                          </button>
-                        </td>
-                        <td className="p-3 text-right space-x-2">
-                          <button 
-                            onClick={() => handleEditClick(doc)}
-                            className="bg-slate-100 hover:bg-slate-200 text-slate-700 p-2 rounded-lg text-xs font-bold transition"
-                            title="Edit Schedule & Info"
-                          >
-                            ✏️
-                          </button>
-                          <button 
-                            onClick={() => setDeleteModalDoc(doc)}
-                            className="bg-rose-50 hover:bg-rose-100 text-rose-600 p-2 rounded-lg text-xs font-bold transition"
-                            title="Delete Doctor"
-                          >
-                            🗑️
-                          </button>
-                        </td>
-                      </tr>
-                    ))}
+                  <tbody className="divide-y text-xs sm:text-sm">
+                    {doctors.map((doc, idx) => {
+                      const reservedCount = getDoctorReservedSlots(doc)
+                      return (
+                        <tr key={doc.id || idx} className="hover:bg-slate-50">
+                          <td className="p-3 font-bold text-slate-700">{idx + 1}</td>
+                          <td className="p-3 font-bold text-slate-900">{doc.name}</td>
+                          <td className="p-3 text-slate-600 font-semibold">{doc.specialization}</td>
+                          <td className="p-3">
+                            <div className="flex items-center gap-2">
+                              <select
+                                value={reservedCount}
+                                disabled={savingSerialDocId === doc.id}
+                                onChange={(e) => handleUpdateDoctorReservedSlots(doc, Number(e.target.value))}
+                                className="border border-teal-300 rounded-xl px-3 py-1.5 text-xs font-bold bg-white text-slate-900 outline-none focus:ring-2 focus:ring-[#008080] cursor-pointer"
+                              >
+                                {[0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10].map(num => (
+                                  <option key={num} value={num}>
+                                    First {num} Serial{num !== 1 ? 's' : ''} Blank {num > 0 ? `(1 to ${num})` : '(None)'}
+                                  </option>
+                                ))}
+                              </select>
+                              {savingSerialDocId === doc.id && (
+                                <span className="text-[11px] font-bold text-[#008080] animate-pulse">Saving...</span>
+                              )}
+                            </div>
+                          </td>
+                          <td className="p-3">
+                            <span className="bg-emerald-100 text-emerald-800 px-3 py-1 rounded-full font-mono font-black text-xs">
+                              Starts from #{reservedCount + 1}
+                            </span>
+                          </td>
+                        </tr>
+                      )
+                    })}
                   </tbody>
                 </table>
               </div>
@@ -1112,43 +1305,61 @@ export default function AdminPanel() {
 
           {(activeTab === 'appointments' || activeTab === 'quick-reserve-list') && (
             <div>
-              <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center mb-6 gap-3">
+              <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center mb-5 gap-3">
                 <div>
-                  <h2 className="text-xl font-black text-slate-900">
+                  <h2 className="text-lg sm:text-xl font-black text-slate-900">
                     {activeTab === 'quick-reserve-list' ? 'Quick Reserve List' : 'Appointments'} ({filteredAppointments.length})
                   </h2>
-                  <p className="text-xs text-slate-500">Review patient bookings</p>
+                  <p className="text-xs text-slate-500">
+                    {activeTab === 'appointments'
+                      ? (filterDoctor
+                          ? `${selectedFilterDocObj?.name}: First ${activeReservedCountForSelectedDoc} serial(s) reserved blank; patient bookings start from #${activeReservedCountForSelectedDoc + 1}`
+                          : 'Showing all doctors with their actual patient serial numbers')
+                      : 'Review emergency quick reservations'}
+                  </p>
                 </div>
-                <button 
-                  onClick={downloadPDFReport}
-                  className="bg-red-600 hover:bg-red-700 text-white px-4 py-2 rounded-xl font-bold text-sm transition shadow-sm flex items-center gap-2"
-                >
-                  <span>📥</span> Download PDF
-                </button>
+                <div className="flex items-center gap-2 w-full sm:w-auto">
+                  {activeTab === 'appointments' && (
+                    <button
+                      onClick={() => setActiveTab('edit-serial')}
+                      className="bg-teal-50 hover:bg-teal-100 text-[#008080] border border-teal-200 px-3.5 py-2 rounded-xl font-bold text-xs sm:text-sm transition flex items-center gap-1.5 flex-1 sm:flex-initial justify-center"
+                    >
+                      <span>⚙️</span> Edit Serial Gap
+                    </button>
+                  )}
+                  <button 
+                    onClick={downloadPDFReport}
+                    className="bg-red-600 hover:bg-red-700 text-white px-4 py-2 rounded-xl font-bold text-xs sm:text-sm transition shadow-sm flex items-center gap-2 flex-1 sm:flex-initial justify-center"
+                  >
+                    <span>📥</span> Download PDF
+                  </button>
+                </div>
               </div>
 
               {activeTab === 'appointments' && (
-                <div className="bg-slate-50 p-4 rounded-xl border border-slate-200 mb-6 flex flex-wrap gap-3 items-center">
-                  <div className="flex-1 min-w-[200px]">
+                <div className="bg-slate-50 p-3.5 rounded-xl border border-slate-200 mb-5 grid grid-cols-1 sm:grid-cols-3 gap-3 items-end">
+                  <div>
                     <label className="text-[11px] font-bold text-slate-600 block mb-1">Filter by Doctor</label>
                     <select 
                       value={filterDoctor}
                       onChange={e => setFilterDoctor(e.target.value)}
-                      className="w-full border rounded-lg px-3 py-1.5 text-xs bg-white font-medium"
+                      className="w-full border rounded-lg px-3 py-2 text-xs bg-white font-medium"
                     >
-                      <option value="">All Doctors</option>
+                      <option value="">All Doctors (Show Main Serials Only)</option>
                       {doctors.map(d => (
-                        <option key={d.id} value={d.id}>{d.name} ({d.specialization})</option>
+                        <option key={d.id} value={d.id}>
+                          {d.name} (Starts #{getDoctorReservedSlots(d) + 1})
+                        </option>
                       ))}
                     </select>
                   </div>
 
-                  <div className="flex-1 min-w-[180px]">
+                  <div>
                     <label className="text-[11px] font-bold text-slate-600 block mb-1">Filter by Date (7 Days)</label>
                     <select 
                       value={filterDateMode}
                       onChange={e => setFilterDateMode(e.target.value)}
-                      className="w-full border rounded-lg px-3 py-1.5 text-xs bg-white font-medium"
+                      className="w-full border rounded-lg px-3 py-2 text-xs bg-white font-medium"
                     >
                       <option value="all">All Dates</option>
                       {getNext7Days().map(dateStr => (
@@ -1158,10 +1369,10 @@ export default function AdminPanel() {
                   </div>
 
                   {(filterDoctor || filterDateMode !== 'all') && (
-                    <div className="self-end">
+                    <div>
                       <button 
                         onClick={() => { setFilterDoctor(''); setFilterDateMode('all') }}
-                        className="bg-slate-200 hover:bg-slate-300 text-slate-700 px-3 py-1.5 rounded-lg text-xs font-bold transition"
+                        className="w-full bg-slate-200 hover:bg-slate-300 text-slate-700 px-3 py-2 rounded-lg text-xs font-bold transition"
                       >
                         Clear Filters
                       </button>
@@ -1170,63 +1381,86 @@ export default function AdminPanel() {
                 </div>
               )}
 
-              {filteredAppointments.length === 0 ? (
-                <p className="text-sm text-slate-500 text-center py-6">No records found.</p>
-              ) : (
-                <div className="overflow-x-auto">
-                  <table className="w-full text-left border-collapse">
-                    <thead>
-                      <tr className="border-b text-xs font-bold text-slate-600 bg-slate-50">
-                        <th className="p-3">Serial</th>
-                        <th className="p-3">Patient Name</th>
-                        <th className="p-3">Age</th>
-                        <th className="p-3">Phone</th>
-                        <th className="p-3">Doctor / Category</th>
-                        <th className="p-3">Date</th>
-                        <th className="p-3">Note</th>
-                        <th className="p-3">Source</th>
-                        <th className="p-3 text-right">Action</th>
+              <div className="overflow-x-auto -mx-3.5 sm:mx-0 px-3.5 sm:px-0">
+                <table className="w-full text-left border-collapse min-w-[680px]">
+                  <thead>
+                    <tr className="border-b text-xs font-bold text-slate-600 bg-slate-50">
+                      <th className="p-2.5 sm:p-3">Serial</th>
+                      <th className="p-2.5 sm:p-3">Patient Name</th>
+                      <th className="p-2.5 sm:p-3">Age</th>
+                      <th className="p-2.5 sm:p-3">Phone</th>
+                      <th className="p-2.5 sm:p-3">Doctor / Category</th>
+                      <th className="p-2.5 sm:p-3">Date</th>
+                      <th className="p-2.5 sm:p-3">Note</th>
+                      <th className="p-2.5 sm:p-3">Source</th>
+                      <th className="p-2.5 sm:p-3 text-right">Action</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y text-xs sm:text-sm">
+                    {/* শুধুমাত্র যখন নির্দিষ্ট একজন ডাক্তার ফিল্টার করা থাকবে, তখন তার নির্ধারিত খালি সিরিয়ালগুলো দেখানো হবে। All Doctors-এ কোনো খালি সিরিয়াল দেখাবে না */}
+                    {activeTab === 'appointments' && filterDoctor && activeReservedCountForSelectedDoc > 0 && Array.from({ length: activeReservedCountForSelectedDoc }, (_, i) => i + 1).map(blankSerial => (
+                      <tr key={`blank-row-${blankSerial}`} className="bg-slate-50/40 text-slate-400">
+                        <td className="p-2.5 sm:p-3 font-mono font-bold text-slate-400">#{blankSerial}</td>
+                        <td className="p-2.5 sm:p-3 italic text-xs text-slate-300">— Reserved Blank —</td>
+                        <td className="p-2.5 sm:p-3">-</td>
+                        <td className="p-2.5 sm:p-3">-</td>
+                        <td className="p-2.5 sm:p-3 text-xs text-slate-400">{selectedFilterDocObj?.name || '-'}</td>
+                        <td className="p-2.5 sm:p-3">-</td>
+                        <td className="p-2.5 sm:p-3">-</td>
+                        <td className="p-2.5 sm:p-3">-</td>
+                        <td className="p-2.5 sm:p-3 text-right">-</td>
                       </tr>
-                    </thead>
-                    <tbody className="divide-y text-sm">
-                      {filteredAppointments.map(app => {
+                    ))}
+
+                    {filteredAppointments.length === 0 ? (
+                      <tr>
+                        <td colSpan={9} className="text-sm text-slate-500 text-center py-6">
+                          No patient bookings found.
+                        </td>
+                      </tr>
+                    ) : (
+                      filteredAppointments.map((app) => {
                         const matchedDoc = doctors.find(d => d.id?.toString() === app.doctor_id?.toString() || d.doctor_no?.toString() === app.doctor_id?.toString())
                         const sourceLabel = app.patient_type === 'Admin' ? 'Admin' : app.patient_type === 'Emergency' ? 'Quick Reserve' : 'Online'
+                        const displaySerial = activeTab === 'appointments'
+                          ? `#${app.computed_serial || app.serial_number}`
+                          : `EQ#${app.serial_number}`
+
                         return (
                           <tr key={app.id} className="hover:bg-slate-50">
-                            <td className="p-3 font-mono font-bold text-[#008080]">#{app.computed_serial || app.serial_number}</td>
-                            <td className="p-3 font-semibold text-slate-900">{app.patient_name}</td>
-                            <td className="p-3 text-slate-600">{app.age || '-'}</td>
-                            <td className="p-3 text-slate-600 font-mono text-xs">{app.phone}</td>
-                            <td className="p-3 text-slate-800 font-medium">{matchedDoc ? matchedDoc.name : app.doctor_id}</td>
-                            <td className="p-3 text-slate-600">{app.booking_date}</td>
-                            <td className="p-3 text-slate-500 text-xs italic">{app.symptoms || 'None'}</td>
-                            <td className="p-3">
-                              <span className={`px-2 py-0.5 rounded text-[11px] font-bold ${sourceLabel === 'Admin' ? 'bg-purple-100 text-purple-700' : sourceLabel === 'Quick Reserve' ? 'bg-amber-100 text-amber-800' : 'bg-teal-50 text-[#008080]'}`}>
+                            <td className="p-2.5 sm:p-3 font-mono font-bold text-[#008080]">{displaySerial}</td>
+                            <td className="p-2.5 sm:p-3 font-semibold text-slate-900">{app.patient_name}</td>
+                            <td className="p-2.5 sm:p-3 text-slate-600">{app.age || '-'}</td>
+                            <td className="p-2.5 sm:p-3 text-slate-600 font-mono text-xs">{app.phone}</td>
+                            <td className="p-2.5 sm:p-3 text-slate-800 font-medium">{matchedDoc ? matchedDoc.name : app.doctor_id}</td>
+                            <td className="p-2.5 sm:p-3 text-slate-600 whitespace-nowrap">{app.booking_date}</td>
+                            <td className="p-2.5 sm:p-3 text-slate-500 text-xs italic">{app.symptoms || 'None'}</td>
+                            <td className="p-2.5 sm:p-3">
+                              <span className={`px-2 py-0.5 rounded text-[11px] font-bold whitespace-nowrap ${sourceLabel === 'Admin' ? 'bg-purple-100 text-purple-700' : sourceLabel === 'Quick Reserve' ? 'bg-amber-100 text-amber-800' : 'bg-teal-50 text-[#008080]'}`}>
                                 {sourceLabel}
                               </span>
                             </td>
-                            <td className="p-3 text-right">
+                            <td className="p-2.5 sm:p-3 text-right whitespace-nowrap">
                               <button 
                                 onClick={() => handleDeleteAppointment(app.id)}
-                                className="bg-rose-50 hover:bg-rose-100 text-rose-600 px-3 py-1 rounded-lg text-xs font-bold transition"
+                                className="bg-rose-50 hover:bg-rose-100 text-rose-600 px-2.5 py-1 rounded-lg text-xs font-bold transition"
                               >
                                 Delete 🗑️
                               </button>
                             </td>
                           </tr>
                         )
-                      })}
-                    </tbody>
-                  </table>
-                </div>
-              )}
+                      })
+                    )}
+                  </tbody>
+                </table>
+              </div>
             </div>
           )}
 
           {activeTab === 'booking' && (
             <div className="max-w-xl mx-auto">
-              <h2 className="text-xl font-black text-slate-900 mb-4">Book Appointment</h2>
+              <h2 className="text-lg sm:text-xl font-black text-slate-900 mb-4">Book Appointment</h2>
               {bookingSubmitted ? (
                 <div className="text-center py-8">
                   <div className="w-16 h-16 bg-emerald-100 text-emerald-600 rounded-full flex items-center justify-center mx-auto text-3xl mb-4 font-bold">✓</div>
@@ -1237,7 +1471,7 @@ export default function AdminPanel() {
                 </div>
               ) : (
                 <form onSubmit={handleAdminBookingSubmit} className="space-y-4">
-                  <div className="grid grid-cols-2 gap-3">
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                     <div>
                       <label className="text-xs font-bold text-slate-700">Specialization <span className="text-rose-500">*</span></label>
                       <select 
@@ -1248,7 +1482,7 @@ export default function AdminPanel() {
                           setSelectedAdminDoctor(null)
                           setAvailableDatesForAdminDoc([])
                         }}
-                        className="w-full border rounded-xl px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-teal-500 bg-white mt-1"
+                        className="w-full border rounded-xl px-3 py-2.5 text-sm outline-none focus:ring-2 focus:ring-teal-500 bg-white mt-1"
                       >
                         <option value="">Select Specialization</option>
                         {Array.from(new Set(doctors.map(d => d.specialization).filter(Boolean))).map((spec: any, idx) => (
@@ -1262,7 +1496,7 @@ export default function AdminPanel() {
                         required
                         value={adminBooking.doctor_id}
                         onChange={e => handleAdminDoctorChange(e.target.value)}
-                        className="w-full border rounded-xl px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-teal-500 bg-white mt-1"
+                        className="w-full border rounded-xl px-3 py-2.5 text-sm outline-none focus:ring-2 focus:ring-teal-500 bg-white mt-1"
                       >
                         <option value="">Select Doctor</option>
                         {doctors.filter(d => !adminBooking.specialization || d.specialization === adminBooking.specialization).map(doc => (
@@ -1274,7 +1508,12 @@ export default function AdminPanel() {
 
                   {selectedAdminDoctor && (
                     <div className="bg-teal-50 border border-teal-200 rounded-xl p-3 text-xs text-slate-800 flex flex-col gap-1.5">
-                      <p className="font-bold text-slate-900 text-sm">{selectedAdminDoctor.name}</p>
+                      <div className="flex justify-between items-center">
+                        <p className="font-bold text-slate-900 text-sm">{selectedAdminDoctor.name}</p>
+                        <span className="bg-white text-[#008080] border border-teal-200 px-2 py-0.5 rounded font-bold text-[11px]">
+                          Starts from Serial #{getDoctorReservedSlots(selectedAdminDoctor) + 1}
+                        </span>
+                      </div>
                       <p className="text-slate-700 font-semibold">{selectedAdminDoctor.degree}</p>
                       <div className="text-[11px] font-bold text-[#008080]">
                         <span>Days: {selectedAdminDoctor.days?.join(', ')}</span><br/>
@@ -1305,7 +1544,7 @@ export default function AdminPanel() {
                     )}
                   </div>
 
-                  <div className="grid grid-cols-2 gap-3">
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                     <div>
                       <label className="text-xs font-bold text-slate-700">Patient Name <span className="text-rose-500">*</span></label>
                       <input 
@@ -1314,7 +1553,7 @@ export default function AdminPanel() {
                         value={adminBooking.name}
                         onChange={e => setAdminBooking({...adminBooking, name: e.target.value})}
                         placeholder="Full Name" 
-                        className="w-full border rounded-xl px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-teal-500 mt-1" 
+                        className="w-full border rounded-xl px-3 py-2.5 text-sm outline-none focus:ring-2 focus:ring-teal-500 mt-1" 
                       />
                     </div>
                     <div>
@@ -1326,12 +1565,12 @@ export default function AdminPanel() {
                         value={adminBooking.phone}
                         onChange={e => setAdminBooking({...adminBooking, phone: e.target.value.replace(/\D/g, '')})}
                         placeholder="11 Digit Mobile Number" 
-                        className="w-full border rounded-xl px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-teal-500 mt-1 font-mono" 
+                        className="w-full border rounded-xl px-3 py-2.5 text-sm outline-none focus:ring-2 focus:ring-teal-500 mt-1 font-mono" 
                       />
                     </div>
                   </div>
 
-                  <div className="grid grid-cols-2 gap-3">
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                     <div>
                       <label className="text-xs font-bold text-slate-700">Age</label>
                       <input 
@@ -1339,7 +1578,7 @@ export default function AdminPanel() {
                         value={adminBooking.age}
                         onChange={e => setAdminBooking({...adminBooking, age: e.target.value})}
                         placeholder="Age" 
-                        className="w-full border rounded-xl px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-teal-500 mt-1" 
+                        className="w-full border rounded-xl px-3 py-2.5 text-sm outline-none focus:ring-2 focus:ring-teal-500 mt-1" 
                       />
                     </div>
                     <div>
@@ -1349,7 +1588,7 @@ export default function AdminPanel() {
                         value={adminBooking.note}
                         onChange={e => setAdminBooking({...adminBooking, note: e.target.value})}
                         placeholder="Add a note..." 
-                        className="w-full border rounded-xl px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-teal-500 mt-1" 
+                        className="w-full border rounded-xl px-3 py-2.5 text-sm outline-none focus:ring-2 focus:ring-teal-500 mt-1" 
                       />
                     </div>
                   </div>
@@ -1368,7 +1607,7 @@ export default function AdminPanel() {
 
           {activeTab === 'quick-reserve' && (
             <div className="max-w-xl mx-auto">
-              <h3 className="text-xl font-black text-slate-900 mb-4">Quick Reserve (Emergency Slots)</h3>
+              <h3 className="text-lg sm:text-xl font-black text-slate-900 mb-4">Quick Reserve (Emergency Slots)</h3>
               {quickSubmitted ? (
                 <div className="text-center py-8">
                   <div className="w-16 h-16 bg-emerald-100 text-emerald-600 rounded-full flex items-center justify-center mx-auto text-3xl mb-4 font-bold">✓</div>
@@ -1379,13 +1618,13 @@ export default function AdminPanel() {
                 </div>
               ) : (
                 <div>
-                  <div className="grid grid-cols-5 gap-2 mb-4">
+                  <div className="grid grid-cols-5 gap-1.5 sm:gap-2 mb-4">
                     {['NICU', 'PICU', 'ICU', 'General', 'OPD'].map((type) => (
                       <button
                         key={type}
                         type="button"
                         onClick={() => setQuickReserveType(type)}
-                        className={`py-2 px-1 rounded-xl text-xs font-bold border transition ${quickReserveType === type ? 'bg-[#008080] text-white border-[#008080] shadow-sm' : 'bg-slate-50 text-slate-700 border-slate-200 hover:bg-slate-100'}`}
+                        className={`py-2.5 px-1 rounded-xl text-xs font-bold border transition ${quickReserveType === type ? 'bg-[#008080] text-white border-[#008080] shadow-sm' : 'bg-slate-50 text-slate-700 border-slate-200 hover:bg-slate-100'}`}
                       >
                         {type}
                       </button>
@@ -1393,7 +1632,7 @@ export default function AdminPanel() {
                   </div>
 
                   <form onSubmit={handleAdminQuickSubmit} className="space-y-3">
-                    <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+                    <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
                       <div className="sm:col-span-2">
                         <label className="text-xs font-bold text-slate-700">Patient Name <span className="text-rose-500">*</span></label>
                         <input 
@@ -1402,7 +1641,7 @@ export default function AdminPanel() {
                           value={quickForm.name} 
                           onChange={e => setQuickForm({...quickForm, name: e.target.value})}
                           placeholder="Patient Full Name" 
-                          className="w-full border rounded-xl px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-teal-500 mt-1" 
+                          className="w-full border rounded-xl px-3 py-2.5 text-sm outline-none focus:ring-2 focus:ring-teal-500 mt-1" 
                         />
                       </div>
                       <div>
@@ -1412,7 +1651,7 @@ export default function AdminPanel() {
                           value={quickForm.age} 
                           onChange={e => setQuickForm({...quickForm, age: e.target.value})}
                           placeholder="Age" 
-                          className="w-full border rounded-xl px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-teal-500 mt-1" 
+                          className="w-full border rounded-xl px-3 py-2.5 text-sm outline-none focus:ring-2 focus:ring-teal-500 mt-1" 
                         />
                       </div>
                     </div>
@@ -1426,7 +1665,7 @@ export default function AdminPanel() {
                         value={quickForm.contact} 
                         onChange={e => setQuickForm({...quickForm, contact: e.target.value.replace(/\D/g, '')})}
                         placeholder="11 Digit Mobile Number" 
-                        className="w-full border rounded-xl px-3 py-2 text-sm font-mono outline-none focus:ring-2 focus:ring-teal-500 mt-1" 
+                        className="w-full border rounded-xl px-3 py-2.5 text-sm font-mono outline-none focus:ring-2 focus:ring-teal-500 mt-1" 
                       />
                     </div>
 
@@ -1444,14 +1683,14 @@ export default function AdminPanel() {
 
           {activeTab === 'lab-reports' && (
             <div>
-              <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center mb-6 gap-3">
+              <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center mb-5 gap-3">
                 <div>
-                  <h2 className="text-xl font-black text-slate-900">Diagnostic Lab & Reports ({filteredLabReports.length})</h2>
+                  <h2 className="text-lg sm:text-xl font-black text-slate-900">Diagnostic Lab & Reports ({filteredLabReports.length})</h2>
                   <p className="text-xs text-slate-500">Create, upload PDF/Image reports, send SMS notifications, and print official diagnostic slips</p>
                 </div>
                 <button 
                   onClick={() => { resetLabForm(); setIsLabModalOpen(true) }}
-                  className="bg-[#008080] hover:bg-[#006666] text-white px-4 py-2.5 rounded-xl font-bold text-sm transition shadow-sm flex items-center gap-2"
+                  className="bg-[#008080] hover:bg-[#006666] text-white px-4 py-2.5 rounded-xl font-bold text-xs sm:text-sm transition shadow-sm flex items-center gap-2 w-full sm:w-auto justify-center"
                 >
                   <span>+</span> Create / Upload Lab Report
                 </button>
@@ -1481,23 +1720,23 @@ export default function AdminPanel() {
                 </div>
               </div>
 
-              <div className="bg-slate-50 p-4 rounded-xl border border-slate-200 mb-6 flex flex-wrap gap-3 items-center">
-                <div className="flex-1 min-w-[220px]">
+              <div className="bg-slate-50 p-3.5 rounded-xl border border-slate-200 mb-5 grid grid-cols-1 sm:grid-cols-3 gap-3 items-end">
+                <div className="sm:col-span-2">
                   <label className="text-[11px] font-bold text-slate-600 block mb-1">Search by Bill / Invoice No, Patient Name or Phone</label>
                   <input 
                     type="text"
                     value={labSearchQuery}
                     onChange={e => setLabSearchQuery(e.target.value)}
                     placeholder="Search by Bill No, Patient Name, or Phone..."
-                    className="w-full border rounded-lg px-3 py-1.5 text-xs bg-white outline-none focus:ring-2 focus:ring-teal-500"
+                    className="w-full border rounded-lg px-3 py-2 text-xs bg-white outline-none focus:ring-2 focus:ring-teal-500"
                   />
                 </div>
-                <div className="w-44">
+                <div>
                   <label className="text-[11px] font-bold text-slate-600 block mb-1">Report Status</label>
                   <select 
                     value={labFilterStatus}
                     onChange={e => setLabFilterStatus(e.target.value)}
-                    className="w-full border rounded-lg px-3 py-1.5 text-xs bg-white font-semibold"
+                    className="w-full border rounded-lg px-3 py-2 text-xs bg-white font-semibold"
                   >
                     <option value="All">All Status</option>
                     <option value="Ready">Ready</option>
@@ -1514,61 +1753,61 @@ export default function AdminPanel() {
                   <p className="text-xs text-slate-500 mt-1">Click "+ Create / Upload Lab Report" to add a new patient diagnostic report.</p>
                 </div>
               ) : (
-                <div className="overflow-x-auto">
-                  <table className="w-full text-left border-collapse">
+                <div className="overflow-x-auto -mx-3.5 sm:mx-0 px-3.5 sm:px-0">
+                  <table className="w-full text-left border-collapse min-w-[680px]">
                     <thead>
                       <tr className="border-b text-xs font-bold text-slate-600 bg-slate-50">
-                        <th className="p-3">Bill / Invoice No</th>
-                        <th className="p-3">Patient Info</th>
-                        <th className="p-3">Test / Investigation</th>
-                        <th className="p-3">Date</th>
-                        <th className="p-3">Payment</th>
-                        <th className="p-3">Report File</th>
-                        <th className="p-3">Status</th>
-                        <th className="p-3 text-right">Actions</th>
+                        <th className="p-2.5 sm:p-3">Bill / Invoice No</th>
+                        <th className="p-2.5 sm:p-3">Patient Info</th>
+                        <th className="p-2.5 sm:p-3">Test / Investigation</th>
+                        <th className="p-2.5 sm:p-3">Date</th>
+                        <th className="p-2.5 sm:p-3">Payment</th>
+                        <th className="p-2.5 sm:p-3">Report File</th>
+                        <th className="p-2.5 sm:p-3">Status</th>
+                        <th className="p-2.5 sm:p-3 text-right">Actions</th>
                       </tr>
                     </thead>
-                    <tbody className="divide-y text-sm">
+                    <tbody className="divide-y text-xs sm:text-sm">
                       {filteredLabReports.map((rep) => (
                         <tr key={rep.id} className="hover:bg-slate-50">
-                          <td className="p-3 font-mono font-black text-[#008080] text-xs">{rep.invoice_no}</td>
-                          <td className="p-3">
+                          <td className="p-2.5 sm:p-3 font-mono font-black text-[#008080] text-xs">{rep.invoice_no}</td>
+                          <td className="p-2.5 sm:p-3">
                             <div className="font-bold text-slate-900">{rep.patient_name}</div>
                             <div className="text-xs text-slate-500 font-mono">{rep.phone} • {rep.age ? `${rep.age}Y` : ''} ({rep.gender})</div>
                           </td>
-                          <td className="p-3">
+                          <td className="p-2.5 sm:p-3">
                             <div className="font-semibold text-slate-800">{rep.test_name}</div>
                             <div className="text-[11px] text-slate-500">Ref: {rep.referred_by || 'Self'}</div>
                           </td>
-                          <td className="p-3 text-xs text-slate-600">{rep.test_date}</td>
-                          <td className="p-3">
-                            <span className={`px-2 py-0.5 rounded text-[10px] font-bold ${rep.payment_status === 'Paid' ? 'bg-emerald-100 text-emerald-800' : 'bg-rose-100 text-rose-700'}`}>
+                          <td className="p-2.5 sm:p-3 text-xs text-slate-600 whitespace-nowrap">{rep.test_date}</td>
+                          <td className="p-2.5 sm:p-3">
+                            <span className={`px-2 py-0.5 rounded text-[10px] font-bold whitespace-nowrap ${rep.payment_status === 'Paid' ? 'bg-emerald-100 text-emerald-800' : 'bg-rose-100 text-rose-700'}`}>
                               {rep.payment_status} ({rep.amount})
                             </span>
                           </td>
-                          <td className="p-3 text-xs">
+                          <td className="p-2.5 sm:p-3 text-xs">
                             {rep.file_url ? (
                               <a 
                                 href={rep.file_url} 
                                 download={rep.file_name || `${rep.invoice_no}-report`}
-                                className="text-[#008080] font-bold hover:underline flex items-center gap-1"
+                                className="text-[#008080] font-bold hover:underline flex items-center gap-1 whitespace-nowrap"
                               >
-                                📎 Download File
+                                📎 Download
                               </a>
                             ) : (
                               <span className="text-slate-400 text-[11px]">Text Report</span>
                             )}
                           </td>
-                          <td className="p-3">
+                          <td className="p-2.5 sm:p-3">
                             <button
                               onClick={() => handleToggleLabStatus(rep)}
                               title="Click to toggle Ready / Processing"
-                              className={`px-2.5 py-1 rounded-md text-xs font-bold cursor-pointer transition ${rep.delivery_status === 'Ready' ? 'bg-emerald-100 text-emerald-700 hover:bg-emerald-200' : 'bg-amber-100 text-amber-800 hover:bg-amber-200'}`}
+                              className={`px-2.5 py-1 rounded-md text-xs font-bold cursor-pointer transition whitespace-nowrap ${rep.delivery_status === 'Ready' ? 'bg-emerald-100 text-emerald-700 hover:bg-emerald-200' : 'bg-amber-100 text-amber-800 hover:bg-amber-200'}`}
                             >
                               {rep.delivery_status === 'Ready' ? '✅ Ready' : '⏳ Processing'}
                             </button>
                           </td>
-                          <td className="p-3 text-right space-x-1.5 whitespace-nowrap">
+                          <td className="p-2.5 sm:p-3 text-right space-x-1.5 whitespace-nowrap">
                             <button 
                               onClick={() => printSingleLabReport(rep)}
                               className="bg-teal-50 hover:bg-teal-100 text-[#008080] px-2.5 py-1.5 rounded-lg text-xs font-bold transition"
@@ -1604,10 +1843,10 @@ export default function AdminPanel() {
       </div>
 
       {isLabModalOpen && (
-        <div className="fixed inset-0 bg-black/50 backdrop-blur-xs flex items-center justify-center p-4 z-50 overflow-y-auto">
-          <div className="bg-white rounded-2xl max-w-2xl w-full p-6 sm:p-8 shadow-2xl relative max-h-[92vh] overflow-y-auto">
+        <div className="fixed inset-0 bg-black/50 backdrop-blur-xs flex items-center justify-center p-3 sm:p-4 z-50 overflow-y-auto">
+          <div className="bg-white rounded-2xl max-w-2xl w-full p-5 sm:p-8 shadow-2xl relative max-h-[92vh] overflow-y-auto">
             <button onClick={() => setIsLabModalOpen(false)} className="absolute top-4 right-4 text-slate-400 hover:text-slate-600 font-bold text-lg">✕</button>
-            <h3 className="text-xl font-black text-slate-900 mb-1">{isLabEditMode ? 'Edit Diagnostic Lab Report' : 'Create / Upload New Lab Report'}</h3>
+            <h3 className="text-lg sm:text-xl font-black text-slate-900 mb-1">{isLabEditMode ? 'Edit Diagnostic Lab Report' : 'Create / Upload New Lab Report'}</h3>
             <p className="text-xs text-slate-500 mb-4">Patients can immediately download Ready reports from the website using their Bill / Invoice Number or Phone Number.</p>
 
             <form onSubmit={handleSaveLabReport} className="space-y-4">
@@ -1799,13 +2038,13 @@ export default function AdminPanel() {
       )}
 
       {isAddModalOpen && (
-        <div className="fixed inset-0 bg-black/50 backdrop-blur-xs flex items-center justify-center p-4 z-50 overflow-y-auto">
-          <div className="bg-white rounded-2xl max-w-2xl w-full p-6 sm:p-8 shadow-2xl relative max-h-[90vh] overflow-y-auto">
+        <div className="fixed inset-0 bg-black/50 backdrop-blur-xs flex items-center justify-center p-3 sm:p-4 z-50 overflow-y-auto">
+          <div className="bg-white rounded-2xl max-w-2xl w-full p-5 sm:p-8 shadow-2xl relative max-h-[90vh] overflow-y-auto">
             <button onClick={() => setIsAddModalOpen(false)} className="absolute top-4 right-4 text-slate-400 hover:text-slate-600 font-bold text-lg">✕</button>
-            <h3 className="text-xl font-black text-slate-900 mb-1">{isEditMode ? 'Edit Doctor & Schedule' : 'Add New Doctor'}</h3>
+            <h3 className="text-lg sm:text-xl font-black text-slate-900 mb-1">{isEditMode ? 'Edit Doctor & Schedule' : 'Add New Doctor'}</h3>
             
             <form onSubmit={handleSaveDoctor} className="space-y-4">
-              <div className="grid grid-cols-2 gap-3">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 <div>
                   <label className="text-xs font-bold text-slate-700">Doctor Name *</label>
                   <input type="text" required value={docForm.name} onChange={e => setDocForm({...docForm, name: e.target.value})} placeholder="Dr. Name" className="w-full border rounded-xl px-3 py-2 text-sm mt-1" />
@@ -1816,7 +2055,7 @@ export default function AdminPanel() {
                 </div>
               </div>
 
-              <div className="grid grid-cols-2 gap-3">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 <div>
                   <label className="text-xs font-bold text-slate-700">Degree</label>
                   <input type="text" value={docForm.degree} onChange={e => setDocForm({...docForm, degree: e.target.value})} placeholder="MBBS, FCPS" className="w-full border rounded-xl px-3 py-2 text-sm mt-1" />
@@ -1832,7 +2071,7 @@ export default function AdminPanel() {
                 <input type="text" value={docForm.details} onChange={e => setDocForm({...docForm, details: e.target.value})} placeholder="Specialized in..." className="w-full border rounded-xl px-3 py-2 text-sm mt-1" />
               </div>
 
-              <div className="grid grid-cols-2 gap-3">
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
                 <div>
                   <label className="text-xs font-bold text-slate-700">Branch / Workplace</label>
                   <input type="text" value={docForm.branch} onChange={e => setDocForm({...docForm, branch: e.target.value})} placeholder="Delta Health Care" className="w-full border rounded-xl px-3 py-2 text-sm mt-1" />
@@ -1841,9 +2080,21 @@ export default function AdminPanel() {
                   <label className="text-xs font-bold text-slate-700">Follow Up Fee</label>
                   <input type="text" value={docForm.follow_up_fee} onChange={e => setDocForm({...docForm, follow_up_fee: e.target.value})} placeholder="Fee" className="w-full border rounded-xl px-3 py-2 text-sm mt-1" />
                 </div>
+                <div>
+                  <label className="text-xs font-bold text-slate-700">Reserved Blank Serials</label>
+                  <select
+                    value={docForm.reserved_slots}
+                    onChange={e => setDocForm({...docForm, reserved_slots: Number(e.target.value)})}
+                    className="w-full border rounded-xl px-3 py-2 text-sm mt-1 bg-white font-bold text-[#008080]"
+                  >
+                    {[0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10].map(n => (
+                      <option key={n} value={n}>First {n} Blank (Starts #{n + 1})</option>
+                    ))}
+                  </select>
+                </div>
               </div>
 
-              <div className="grid grid-cols-2 gap-3">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 <div>
                   <label className="text-xs font-bold text-slate-700">Specialization *</label>
                   <input type="text" required value={docForm.specialization} onChange={e => setDocForm({...docForm, specialization: e.target.value})} placeholder="Gynae & Obs." className="w-full border rounded-xl px-3 py-2 text-sm mt-1" />
@@ -1864,14 +2115,14 @@ export default function AdminPanel() {
                     src={docForm.image_url || "/doctors/doctor-1.png"} 
                     alt="Preview" 
                     onError={(e: any) => { e.target.src = "/doctors/doctor-1.png" }}
-                    className="w-14 h-14 rounded-full object-cover border bg-white" 
+                    className="w-14 h-14 rounded-full object-cover border bg-white flex-shrink-0" 
                   />
-                  <div className="flex-1">
+                  <div className="flex-1 overflow-hidden">
                     <input 
                       type="file" 
                       accept="image/*"
                       onChange={handleImageFileChange}
-                      className="text-xs file:mr-3 file:py-2 file:px-4 file:rounded-full file:border-0 file:text-xs file:font-bold file:bg-[#008080] file:text-white hover:file:bg-[#006666] cursor-pointer"
+                      className="text-xs file:mr-3 file:py-2 file:px-4 file:rounded-full file:border-0 file:text-xs file:font-bold file:bg-[#008080] file:text-white hover:file:bg-[#006666] cursor-pointer w-full"
                     />
                   </div>
                 </div>
@@ -1881,7 +2132,7 @@ export default function AdminPanel() {
                 <label className="text-xs font-extrabold text-slate-800 block mb-2">Available Days & Time Slots</label>
                 <div className="space-y-2">
                   {daysOfWeek.map(day => (
-                    <div key={day} className="flex items-center justify-between bg-slate-50 p-2.5 rounded-xl border">
+                    <div key={day} className="flex flex-wrap items-center justify-between bg-slate-50 p-2.5 rounded-xl border gap-2">
                       <label className="flex items-center gap-2 cursor-pointer text-sm font-semibold">
                         <input 
                           type="checkbox" 
