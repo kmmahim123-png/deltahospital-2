@@ -20,6 +20,9 @@ export default function AdminPanel() {
   const [isEditMode, setIsEditMode] = useState(false)
   const [currentDocId, setCurrentDocId] = useState<any>(null)
   const [savingSerialDocId, setSavingSerialDocId] = useState<any>(null)
+  const [admittingId, setAdmittingId] = useState<any>(null)
+  const [isSubmittingBooking, setIsSubmittingBooking] = useState(false)
+  const [isSubmittingQuick, setIsSubmittingQuick] = useState(false)
 
   const daysOfWeek = ['Saturday', 'Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday']
 
@@ -62,7 +65,16 @@ export default function AdminPanel() {
   const [bookingSubmitted, setBookingSubmitted] = useState(false)
 
   const [quickReserveType, setQuickReserveType] = useState('ICU')
-  const [quickForm, setQuickForm] = useState({ name: '', age: '', contact: '' })
+  const [quickForm, setQuickForm] = useState({
+    name: '',
+    age: '',
+    contact: '',
+    alt_contact: '',
+    note: '',
+    is_referred: false,
+    ref_name: '',
+    ref_phone: ''
+  })
   const [quickSubmitted, setQuickSubmitted] = useState(false)
 
   const [labReports, setLabReports] = useState<any[]>([])
@@ -90,7 +102,6 @@ export default function AdminPanel() {
     return `${year}-${month}-${day}`
   }
 
-  // প্রতিটি ডাক্তারের জন্য কয়টি সিরিয়াল ফাঁকা থাকবে তা বের করার ফাংশন (ডিফল্ট ৩টি)
   const getDoctorReservedSlots = (doc: any): number => {
     if (!doc) return 3
     if (typeof doc.reserved_slots === 'number') return doc.reserved_slots
@@ -102,6 +113,61 @@ export default function AdminPanel() {
       return sched._reserved_slots
     }
     return 3
+  }
+
+  const isEmergencyBooking = (app: any) => {
+    return (
+      app?.doctor_id?.toString().startsWith('Emergency-') ||
+      app?.patient_type === 'Emergency' ||
+      app?.patient_type === 'Emergency-Online' ||
+      app?.patient_type === 'Emergency-Admin'
+    )
+  }
+
+  const getBookingSourceLabel = (app: any) => {
+    let rawSymptoms = app?.symptoms || ''
+    if (
+      app?.patient_type === 'Admin' ||
+      app?.patient_type === 'Emergency-Admin' ||
+      rawSymptoms.includes('[SRC:Admin]')
+    ) {
+      return 'Admin Panel'
+    }
+    return 'Online'
+  }
+
+  const parseAppointmentDetails = (app: any) => {
+    const rawPhone = app.phone || ''
+    const phoneParts = rawPhone.split('|').map((s: string) => s.trim())
+    const mainPhone = phoneParts[0] || ''
+    let altPhone = ''
+    phoneParts.forEach((p: string) => {
+      if (p.toLowerCase().startsWith('alt:')) {
+        altPhone = p.replace(/alt:/i, '').trim()
+      }
+    })
+
+    let rawSymptoms = app.symptoms || ''
+    let refName = ''
+    let refPhone = ''
+
+    const refMatch = rawSymptoms.match(/\[REF:(.*?)\Vert{}(.*?)\]/)
+    if (refMatch) {
+      refName = refMatch[1]?.trim() || ''
+      refPhone = refMatch[2]?.trim() || ''
+      rawSymptoms = rawSymptoms.replace(refMatch[0], '').trim()
+    }
+
+    rawSymptoms = rawSymptoms.replace(/\[SRC:.*?\]/g, '').trim()
+    rawSymptoms = rawSymptoms.replace(/^Quick Reservation:\s*(NICU|PICU|ICU|General|OPD)\s*/i, '').trim()
+
+    return {
+      mainPhone,
+      altPhone,
+      cleanNote: rawSymptoms,
+      refName,
+      refPhone
+    }
   }
 
   const [labForm, setLabForm] = useState({
@@ -206,7 +272,6 @@ export default function AdminPanel() {
     }
   }
 
-  // প্রতিটি ডাক্তারের নিজস্ব রিজার্ভড সিরিয়াল গ্যাপ অনুযায়ী তার রোগীদের সঠিক সিরিয়াল হিসাব করা
   async function cleanupPastBookingsAndFetch(currentDoctorsList?: any[]) {
     try {
       const activeDocs = currentDoctorsList || doctors
@@ -233,11 +298,17 @@ export default function AdminPanel() {
         const validBookings = allData.filter(app => !app.booking_date || app.booking_date >= todayStr)
 
         const grouped: any = {}
+        const emergencyGroupedByDate: any = {}
+
         validBookings.forEach(app => {
-          if (app.patient_type !== 'Emergency') {
+          if (!isEmergencyBooking(app)) {
             const key = `${app.doctor_id}_${app.booking_date}`
             if (!grouped[key]) grouped[key] = []
             grouped[key].push(app)
+          } else {
+            const eKey = app.booking_date || todayStr
+            if (!emergencyGroupedByDate[eKey]) emergencyGroupedByDate[eKey] = []
+            emergencyGroupedByDate[eKey].push(app)
           }
         })
 
@@ -255,10 +326,11 @@ export default function AdminPanel() {
           })
         })
 
-        validBookings.forEach(app => {
-          if (app.patient_type === 'Emergency') {
-            sortedList.push(app)
-          }
+        Object.keys(emergencyGroupedByDate).forEach(eKey => {
+          emergencyGroupedByDate[eKey].forEach((item: any, index: number) => {
+            const strictEmergencySerial = index + 1
+            sortedList.push({ ...item, computed_emergency_serial: strictEmergencySerial })
+          })
         })
 
         setAppointments(sortedList)
@@ -268,7 +340,6 @@ export default function AdminPanel() {
     }
   }
 
-  // ডাক্তারভেদে কয়টি সিরিয়াল বাদ থাকবে তা ডাটাবেসে সেভ করার ফাংশন
   const handleUpdateDoctorReservedSlots = async (doc: any, newReservedCount: number) => {
     setSavingSerialDocId(doc.id)
     try {
@@ -319,6 +390,80 @@ export default function AdminPanel() {
       )
     } catch (err: any) {
       alert('Failed to update status: ' + err.message)
+    }
+  }
+
+  // Mark as Admitted ফাংশন: রোগীর নাম্বারে আলাদা SMS এবং রেফারকারীর নাম্বারে আপনার দেওয়া ফরম্যাটে আলাদা SMS যাবে
+  const handleMarkAsAdmitted = async (app: any, displayEqSerial: string) => {
+    if (app.status === 'Admitted' || admittingId === app.id) return
+    setAdmittingId(app.id)
+
+    try {
+      const { mainPhone, refPhone } = parseAppointmentDetails(app)
+      const slotCategory = (app.doctor_id || '').replace('Emergency-', '') || 'Emergency'
+      const patientNameUpper = (app.patient_name || 'Patient').trim().toUpperCase()
+
+      const { error } = await supabase
+        .from('bookings')
+        .update({ status: 'Admitted' })
+        .eq('id', app.id)
+
+      if (error) throw error
+
+      // ১. বুকিং দেওয়া রোগীর মেইন নাম্বারে Admitted SMS
+      if (mainPhone && mainPhone.length === 11) {
+        const patientSms = `Dear ${app.patient_name}, your admission to Delta Health Care Jatrabari Ltd. (${slotCategory}, Serial: ${displayEqSerial}) has been completed successfully. Wishing you a speedy recovery.`
+        try {
+          await fetch('https://client.giosms.com/api/v1/send', {
+            method: 'POST',
+            headers: {
+              'Authorization': 'Bearer 9|4KjApQNKFOrzY5teFNuZbfOzCKP9Dn4re5aPJfKW219943ad',
+              'Content-Type': 'application/json',
+              'Accept': 'application/json'
+            },
+            body: JSON.stringify({
+              to: `88${mainPhone}`,
+              message: patientSms,
+              sender_id: '8809666720320',
+              type: 'transactional'
+            })
+          })
+        } catch (e) {
+          console.error('Patient admission SMS error:', e)
+        }
+      }
+
+      // ২. রেফারকারীর নাম্বারে (যদি থাকে) আলাদা Admitted SMS
+      if (refPhone && refPhone.length === 11) {
+        const referrerSms = `Dear Sir, the patient *${patientNameUpper}* you referred has been admitted to Delta Health Care Jatrabari Ltd. Thank you for your valuable referral and support.`
+        try {
+          await fetch('https://client.giosms.com/api/v1/send', {
+            method: 'POST',
+            headers: {
+              'Authorization': 'Bearer 9|4KjApQNKFOrzY5teFNuZbfOzCKP9Dn4re5aPJfKW219943ad',
+              'Content-Type': 'application/json',
+              'Accept': 'application/json'
+            },
+            body: JSON.stringify({
+              to: `88${refPhone}`,
+              message: referrerSms,
+              sender_id: '8809666720320',
+              type: 'transactional'
+            })
+          })
+        } catch (e) {
+          console.error('Referrer admission SMS error:', e)
+        }
+      }
+
+      setAppointments(prev =>
+        prev.map(item => (item.id === app.id ? { ...item, status: 'Admitted' } : item))
+      )
+      alert(`Patient "${app.patient_name}" marked as Admitted & SMS notification sent!`)
+    } catch (err: any) {
+      alert('Failed to mark as Admitted: ' + err.message)
+    } finally {
+      setAdmittingId(null)
     }
   }
 
@@ -792,12 +937,13 @@ export default function AdminPanel() {
     }
   }
 
-  // অ্যাডমিন বুকিংয়ের সময় ওই ডাক্তারের নির্ধারিত রিজার্ভড সিরিয়াল বাদ দিয়ে পরবর্তী সিরিয়াল দেওয়া হবে
   const handleAdminBookingSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
+    if (isSubmittingBooking) return
     if (adminBooking.phone.length !== 11) { alert('Phone number must be exactly 11 digits.'); return }
     if (isAdminDoctorAbsent || availableDatesForAdminDoc.length === 0) { alert('Selected doctor is not available.'); return }
 
+    setIsSubmittingBooking(true)
     try {
       const { data: existingBookings } = await supabase
         .from('bookings')
@@ -850,50 +996,115 @@ export default function AdminPanel() {
       await cleanupPastBookingsAndFetch()
     } catch (err: any) {
       alert('Booking failed: ' + err.message)
+    } finally {
+      setIsSubmittingBooking(false)
     }
   }
 
+  // অ্যাডমিন Quick Reserve সাবমিট: ডাবল সাবমিট লক, ক্রমানুসারে EQ#1, EQ#2 সিরিয়াল এবং রোগী ও রেফারকারীর আলাদা SMS
   const handleAdminQuickSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
-    if (quickForm.contact.length !== 11) { alert('Contact number must be 11 digits.'); return }
-    
+    if (isSubmittingQuick) return
+    if (quickForm.contact.length !== 11) { alert('Main contact number must be 11 digits.'); return }
+    if (quickForm.alt_contact && quickForm.alt_contact.length !== 11) { alert('Alternative number must be 11 digits.'); return }
+    if (quickForm.is_referred && quickForm.ref_phone && quickForm.ref_phone.length !== 11) {
+      alert('Referrer phone number must be 11 digits.');
+      return;
+    }
+
+    setIsSubmittingQuick(true)
     const todayDate = getTodayBDDate()
-    const serialNumInt = Math.floor(100 + Math.random() * 900)
 
     try {
-      await supabase.from('bookings').insert({
+      // আজকের মোট ইমার্জেন্সি বুকিং গুনে সিরিয়াল EQ#1, EQ#2, EQ#3 নির্ধারণ করা
+      const { data: existingEmergencies } = await supabase
+        .from('bookings')
+        .select('id, doctor_id, patient_type')
+        .eq('booking_date', todayDate)
+
+      const emergencyCount = (existingEmergencies || []).filter((b: any) => isEmergencyBooking(b)).length
+      const nextEqSerial = emergencyCount + 1
+
+      const combinedPhone = quickForm.alt_contact
+        ? `${quickForm.contact} | Alt:${quickForm.alt_contact}`
+        : quickForm.contact
+
+      const metaParts: string[] = ['[SRC:Admin]']
+      if (quickForm.note.trim()) {
+        metaParts.push(quickForm.note.trim())
+      }
+      if (quickForm.is_referred && (quickForm.ref_name.trim() || quickForm.ref_phone.trim())) {
+        metaParts.push(`[REF:${quickForm.ref_name.trim() || 'Referrer'}|${quickForm.ref_phone.trim()}]`)
+      }
+      const finalSymptoms = metaParts.join(' ')
+
+      const { error } = await supabase.from('bookings').insert({
         patient_name: quickForm.name,
-        phone: quickForm.contact,
+        phone: combinedPhone,
         doctor_id: `Emergency-${quickReserveType}`,
         booking_date: todayDate,
         age: quickForm.age ? parseInt(quickForm.age) : null,
         patient_type: 'Emergency',
-        symptoms: `Quick Reservation: ${quickReserveType}`,
-        serial_number: serialNumInt,
+        symptoms: finalSymptoms,
+        serial_number: nextEqSerial,
         status: 'Confirmed'
       })
 
-      const customSmsMessage = `Dear ${quickForm.name}, your emergency slot (${quickReserveType}) is confirmed. Serial: EQ#${serialNumInt}. Thank you for choosing Delta Health Care Jatrabari Ltd.`
+      if (error) throw error
 
-      await fetch('https://client.giosms.com/api/v1/send', {
-        method: 'POST',
-        headers: {
-          'Authorization': 'Bearer 9|4KjApQNKFOrzY5teFNuZbfOzCKP9Dn4re5aPJfKW219943ad',
-          'Content-Type': 'application/json',
-          'Accept': 'application/json'
-        },
-        body: JSON.stringify({
-          to: `88${quickForm.contact}`,
-          message: customSmsMessage,
-          sender_id: '8809666720320',
-          type: 'transactional'
+      const patientNameUpper = (quickForm.name || 'Patient').trim().toUpperCase()
+
+      // ১. রোগীর মেইন নাম্বারে বুকিং কনফার্মেশন SMS
+      const patientSmsMessage = `Dear ${quickForm.name}, your emergency slot (${quickReserveType}) booking is confirmed. Serial: EQ#${nextEqSerial}. Thank you for choosing Delta Health Care Jatrabari Ltd.`
+
+      try {
+        await fetch('https://client.giosms.com/api/v1/send', {
+          method: 'POST',
+          headers: {
+            'Authorization': 'Bearer 9|4KjApQNKFOrzY5teFNuZbfOzCKP9Dn4re5aPJfKW219943ad',
+            'Content-Type': 'application/json',
+            'Accept': 'application/json'
+          },
+          body: JSON.stringify({
+            to: `88${quickForm.contact}`,
+            message: patientSmsMessage,
+            sender_id: '8809666720320',
+            type: 'transactional'
+          })
         })
-      })
+      } catch (smsErr) {
+        console.error('Patient SMS error:', smsErr)
+      }
+
+      // ২. রেফারকারীর নাম্বারে আলাদা বুকিং কনফার্মেশন SMS
+      if (quickForm.is_referred && quickForm.ref_phone.length === 11) {
+        const referrerBookingSms = `Dear Sir, the patient *${patientNameUpper}* you referred has been booked for an emergency slot (${quickReserveType}, Serial: EQ#${nextEqSerial}) at Delta Health Care Jatrabari Ltd. Thank you for your valuable referral and support.`
+        try {
+          await fetch('https://client.giosms.com/api/v1/send', {
+            method: 'POST',
+            headers: {
+              'Authorization': 'Bearer 9|4KjApQNKFOrzY5teFNuZbfOzCKP9Dn4re5aPJfKW219943ad',
+              'Content-Type': 'application/json',
+              'Accept': 'application/json'
+            },
+            body: JSON.stringify({
+              to: `88${quickForm.ref_phone}`,
+              message: referrerBookingSms,
+              sender_id: '8809666720320',
+              type: 'transactional'
+            })
+          })
+        } catch (refSmsErr) {
+          console.error('Referrer SMS error:', refSmsErr)
+        }
+      }
 
       setQuickSubmitted(true)
       await cleanupPastBookingsAndFetch()
     } catch (err: any) {
       alert('Emergency request failed: ' + err.message)
+    } finally {
+      setIsSubmittingQuick(false)
     }
   }
 
@@ -903,10 +1114,10 @@ export default function AdminPanel() {
     if (app.booking_date && app.booking_date < todayDateStr) return false
 
     if (activeTab === 'quick-reserve-list') {
-      return app.patient_type === 'Emergency'
+      return isEmergencyBooking(app)
     }
     if (activeTab === 'appointments') {
-      if (app.patient_type === 'Emergency') return false
+      if (isEmergencyBooking(app)) return false
       const matchDoc = filterDoctor ? app.doctor_id?.toString() === filterDoctor : true
       const matchDate = filterDateMode !== 'all' ? app.booking_date === filterDateMode : true
       return matchDoc && matchDate
@@ -914,15 +1125,13 @@ export default function AdminPanel() {
     return true
   })
 
-  // যখন একজন নির্দিষ্ট ডাক্তার সিলেক্ট করা থাকবে, তখন তার জন্য কয়টি খালি রো দেখাতে হবে তা বের করা
   const selectedFilterDocObj = filterDoctor
     ? doctors.find(d => d.id?.toString() === filterDoctor.toString() || d.doctor_no?.toString() === filterDoctor.toString())
     : null
   const activeReservedCountForSelectedDoc = selectedFilterDocObj ? getDoctorReservedSlots(selectedFilterDocObj) : 0
 
-  // PDF ডাউনলোডে: All Doctors থাকলে কোনো খালি রো থাকবে না এবং যার যার আসল সিরিয়াল দেখাবে; আর নির্দিষ্ট ডাক্তার সিলেক্ট থাকলে তার খালি রো গুলো উপরে দেখাবে
   const downloadPDFReport = () => {
-    const printWindow = window.open('', '', 'left=0,top=0,width=900,height=700')
+    const printWindow = window.open('', '', 'left=0,top=0,width=950,height=700')
     if (!printWindow) return
 
     const blankRowsHtml = (activeTab === 'appointments' && filterDoctor && activeReservedCountForSelectedDoc > 0)
@@ -949,19 +1158,27 @@ export default function AdminPanel() {
         : idx + 1
       const displaySerial = activeTab === 'appointments'
         ? `#${a.computed_serial || a.serial_number}`
-        : `EQ#${a.serial_number}`
+        : `EQ#${a.computed_emergency_serial || idx + 1}`
+
+      const { mainPhone, altPhone, cleanNote, refName, refPhone } = parseAppointmentDetails(a)
+      const sourceText = getBookingSourceLabel(a)
+      const phoneHtml = `
+        <div><b>${mainPhone}</b></div>
+        ${altPhone ? `<div style="font-size:10px;color:#475569;">Alt: ${altPhone}</div>` : ''}
+        ${(refName || refPhone) ? `<div style="font-size:10px;color:#008080;">Ref: ${refName} (${refPhone})</div>` : ''}
+      `
 
       return `
         <tr>
           <td>${displaySL}</td>
           <td><b>${a.patient_name}</b></td>
-          <td>${a.phone}</td>
+          <td>${phoneHtml}</td>
           <td>${a.age || '-'}</td>
           <td>${docName}</td>
           <td>${a.booking_date}</td>
           <td><b>${displaySerial}</b></td>
-          <td>${a.symptoms || '-'}</td>
-          <td>${a.patient_type === 'Admin' ? 'Admin' : a.patient_type === 'Emergency' ? 'Quick Reserve' : 'Online'}</td>
+          <td>${cleanNote || '-'}</td>
+          <td>${sourceText}${a.status === 'Admitted' ? ' (Admitted)' : ''}</td>
         </tr>
       `
     }).join('')
@@ -985,7 +1202,7 @@ export default function AdminPanel() {
         <body>
           <div class="header">
             <h2>ডেলটা হেলথ্ কেয়ার যাত্রাবাড়ী লিমিটেড</h2>
-            <p>Official Appointments List & Summary Report ${selectedFilterDocObj ? `— ${selectedFilterDocObj.name}` : '(All Doctors)'}</p>
+            <p>Official ${activeTab === 'quick-reserve-list' ? 'Quick Reserve' : 'Appointments'} List & Summary Report</p>
             <p>Generated Date: ${new Date().toLocaleDateString()}</p>
           </div>
           <table>
@@ -993,18 +1210,18 @@ export default function AdminPanel() {
               <tr>
                 <th>SL</th>
                 <th>Patient Name</th>
-                <th>Phone</th>
+                <th>Phone & Referral</th>
                 <th>Age</th>
-                <th>Doctor</th>
+                <th>Doctor / Category</th>
                 <th>Date</th>
                 <th>Serial</th>
                 <th>Note</th>
-                <th>Type</th>
+                <th>Status / Source</th>
               </tr>
             </thead>
             <tbody>
               ${blankRowsHtml}
-              ${rowsHtml || '<tr><td colspan="9" style="text-align:center;">No appointments found.</td></tr>'}
+              ${rowsHtml || '<tr><td colspan="9" style="text-align:center;">No records found.</td></tr>'}
             </tbody>
           </table>
           <div class="footer">
@@ -1079,7 +1296,7 @@ export default function AdminPanel() {
 
   return (
     <div className="min-h-screen bg-slate-100 flex flex-col font-sans text-slate-900 w-full overflow-x-hidden">
-      {/* Mobile-Optimized Admin Header */}
+      {/* Admin Header */}
       <header className="bg-white border-b border-slate-200 py-3 px-3 sm:px-10 flex flex-wrap justify-between items-center gap-2 shadow-xs">
         <div className="flex items-center gap-2.5">
           <div className="w-9 h-9 sm:w-10 sm:h-10 flex items-center justify-center bg-white rounded-xl p-1 border flex-shrink-0">
@@ -1100,7 +1317,7 @@ export default function AdminPanel() {
         </div>
       </header>
 
-      {/* Mobile-First Layout */}
+      {/* Main Content */}
       <div className="flex flex-col lg:flex-row flex-1 max-w-7xl w-full mx-auto p-3 sm:p-6 gap-4 sm:gap-6">
         <aside className="w-full lg:w-64 bg-white border border-slate-200 rounded-2xl p-2 sm:p-4 h-fit shadow-xs flex lg:flex-col gap-1.5 sm:gap-2 overflow-x-auto scrollbar-hide">
           <button 
@@ -1128,7 +1345,11 @@ export default function AdminPanel() {
             <span>➕</span> Booking Appointment
           </button>
           <button 
-            onClick={() => setActiveTab('quick-reserve')}
+            onClick={() => {
+              setQuickSubmitted(false);
+              setQuickForm({ name: '', age: '', contact: '', alt_contact: '', note: '', is_referred: false, ref_name: '', ref_phone: '' });
+              setActiveTab('quick-reserve');
+            }}
             className={`flex items-center gap-2 px-3.5 py-2.5 sm:px-4 sm:py-3 rounded-xl font-bold text-xs sm:text-sm transition whitespace-nowrap flex-shrink-0 ${activeTab === 'quick-reserve' ? 'bg-[#008080] text-white shadow-sm' : 'text-slate-600 hover:bg-slate-50 bg-slate-50/60 lg:bg-transparent'}`}
           >
             <span>⚡</span> Quick Reserve Form
@@ -1241,7 +1462,6 @@ export default function AdminPanel() {
             </div>
           )}
 
-          {/* নতুন ট্যাব: প্রতিটি ডাক্তারের জন্য আলাদা করে কয়টি সিরিয়াল ফাঁকা থাকবে তা এডিট করার অপশন */}
           {activeTab === 'edit-serial' && (
             <div>
               <div className="mb-5">
@@ -1315,7 +1535,7 @@ export default function AdminPanel() {
                       ? (filterDoctor
                           ? `${selectedFilterDocObj?.name}: First ${activeReservedCountForSelectedDoc} serial(s) reserved blank; patient bookings start from #${activeReservedCountForSelectedDoc + 1}`
                           : 'Showing all doctors with their actual patient serial numbers')
-                      : 'Review emergency quick reservations'}
+                      : 'Review emergency quick reservations (EQ#1, EQ#2...), referral details & mark patients as Admitted'}
                   </p>
                 </div>
                 <div className="flex items-center gap-2 w-full sm:w-auto">
@@ -1382,22 +1602,21 @@ export default function AdminPanel() {
               )}
 
               <div className="overflow-x-auto -mx-3.5 sm:mx-0 px-3.5 sm:px-0">
-                <table className="w-full text-left border-collapse min-w-[680px]">
+                <table className="w-full text-left border-collapse min-w-[740px]">
                   <thead>
                     <tr className="border-b text-xs font-bold text-slate-600 bg-slate-50">
                       <th className="p-2.5 sm:p-3">Serial</th>
                       <th className="p-2.5 sm:p-3">Patient Name</th>
                       <th className="p-2.5 sm:p-3">Age</th>
-                      <th className="p-2.5 sm:p-3">Phone</th>
+                      <th className="p-2.5 sm:p-3">Phone & Referral</th>
                       <th className="p-2.5 sm:p-3">Doctor / Category</th>
                       <th className="p-2.5 sm:p-3">Date</th>
                       <th className="p-2.5 sm:p-3">Note</th>
-                      <th className="p-2.5 sm:p-3">Source</th>
+                      <th className="p-2.5 sm:p-3">Status / Source</th>
                       <th className="p-2.5 sm:p-3 text-right">Action</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y text-xs sm:text-sm">
-                    {/* শুধুমাত্র যখন নির্দিষ্ট একজন ডাক্তার ফিল্টার করা থাকবে, তখন তার নির্ধারিত খালি সিরিয়ালগুলো দেখানো হবে। All Doctors-এ কোনো খালি সিরিয়াল দেখাবে না */}
                     {activeTab === 'appointments' && filterDoctor && activeReservedCountForSelectedDoc > 0 && Array.from({ length: activeReservedCountForSelectedDoc }, (_, i) => i + 1).map(blankSerial => (
                       <tr key={`blank-row-${blankSerial}`} className="bg-slate-50/40 text-slate-400">
                         <td className="p-2.5 sm:p-3 font-mono font-bold text-slate-400">#{blankSerial}</td>
@@ -1419,34 +1638,82 @@ export default function AdminPanel() {
                         </td>
                       </tr>
                     ) : (
-                      filteredAppointments.map((app) => {
+                      filteredAppointments.map((app, idx) => {
                         const matchedDoc = doctors.find(d => d.id?.toString() === app.doctor_id?.toString() || d.doctor_no?.toString() === app.doctor_id?.toString())
-                        const sourceLabel = app.patient_type === 'Admin' ? 'Admin' : app.patient_type === 'Emergency' ? 'Quick Reserve' : 'Online'
+                        const sourceLabel = getBookingSourceLabel(app)
                         const displaySerial = activeTab === 'appointments'
                           ? `#${app.computed_serial || app.serial_number}`
-                          : `EQ#${app.serial_number}`
+                          : `EQ#${app.computed_emergency_serial || idx + 1}`
+
+                        const { mainPhone, altPhone, cleanNote, refName, refPhone } = parseAppointmentDetails(app)
+                        const isAdmitted = app.status === 'Admitted'
 
                         return (
                           <tr key={app.id} className="hover:bg-slate-50">
                             <td className="p-2.5 sm:p-3 font-mono font-bold text-[#008080]">{displaySerial}</td>
                             <td className="p-2.5 sm:p-3 font-semibold text-slate-900">{app.patient_name}</td>
                             <td className="p-2.5 sm:p-3 text-slate-600">{app.age || '-'}</td>
-                            <td className="p-2.5 sm:p-3 text-slate-600 font-mono text-xs">{app.phone}</td>
+                            <td className="p-2.5 sm:p-3">
+                              <div className="font-mono font-bold text-slate-900 text-xs">{mainPhone}</div>
+                              {altPhone && (
+                                <div className="font-mono text-[11px] text-slate-500 mt-0.5">
+                                  Alt: {altPhone}
+                                </div>
+                              )}
+                              {(refName || refPhone) && (
+                                <div className="mt-1 bg-teal-50 border border-teal-200 rounded px-2 py-0.5 text-[10px] text-[#008080] font-bold">
+                                  Ref: {refName || 'Yes'} {refPhone ? `(${refPhone})` : ''}
+                                </div>
+                              )}
+                            </td>
                             <td className="p-2.5 sm:p-3 text-slate-800 font-medium">{matchedDoc ? matchedDoc.name : app.doctor_id}</td>
                             <td className="p-2.5 sm:p-3 text-slate-600 whitespace-nowrap">{app.booking_date}</td>
-                            <td className="p-2.5 sm:p-3 text-slate-500 text-xs italic">{app.symptoms || 'None'}</td>
+                            <td className="p-2.5 sm:p-3 text-slate-600 text-xs italic max-w-[180px]">
+                              {cleanNote || 'None'}
+                            </td>
                             <td className="p-2.5 sm:p-3">
-                              <span className={`px-2 py-0.5 rounded text-[11px] font-bold whitespace-nowrap ${sourceLabel === 'Admin' ? 'bg-purple-100 text-purple-700' : sourceLabel === 'Quick Reserve' ? 'bg-amber-100 text-amber-800' : 'bg-teal-50 text-[#008080]'}`}>
-                                {sourceLabel}
-                              </span>
+                              <div className="flex flex-col gap-1 items-start">
+                                <span className={`px-2.5 py-0.5 rounded text-[10px] font-bold whitespace-nowrap ${
+                                  sourceLabel === 'Admin Panel'
+                                    ? 'bg-purple-100 text-purple-700 border border-purple-200'
+                                    : 'bg-teal-50 text-[#008080] border border-teal-200'
+                                }`}>
+                                  {sourceLabel}
+                                </span>
+                                {isAdmitted && (
+                                  <span className="bg-emerald-600 text-white px-2 py-0.5 rounded text-[10px] font-extrabold whitespace-nowrap">
+                                    ✅ Admitted
+                                  </span>
+                                )}
+                              </div>
                             </td>
                             <td className="p-2.5 sm:p-3 text-right whitespace-nowrap">
-                              <button 
-                                onClick={() => handleDeleteAppointment(app.id)}
-                                className="bg-rose-50 hover:bg-rose-100 text-rose-600 px-2.5 py-1 rounded-lg text-xs font-bold transition"
-                              >
-                                Delete 🗑️
-                              </button>
+                              <div className="flex items-center justify-end gap-1.5">
+                                {activeTab === 'quick-reserve-list' && (
+                                  <button
+                                    type="button"
+                                    disabled={isAdmitted || admittingId === app.id}
+                                    onClick={() => handleMarkAsAdmitted(app, displaySerial)}
+                                    className={`px-2.5 py-1.5 rounded-lg text-xs font-bold transition shadow-xs ${
+                                      isAdmitted
+                                        ? 'bg-emerald-100 text-emerald-800 cursor-default'
+                                        : 'bg-[#008080] hover:bg-[#006666] text-white cursor-pointer'
+                                    }`}
+                                  >
+                                    {admittingId === app.id
+                                      ? 'Sending SMS...'
+                                      : isAdmitted
+                                      ? '✅ Admitted'
+                                      : '🏥 Mark as Admitted'}
+                                  </button>
+                                )}
+                                <button 
+                                  onClick={() => handleDeleteAppointment(app.id)}
+                                  className="bg-rose-50 hover:bg-rose-100 text-rose-600 px-2.5 py-1.5 rounded-lg text-xs font-bold transition"
+                                >
+                                  Delete 🗑️
+                                </button>
+                              </div>
                             </td>
                           </tr>
                         )
@@ -1595,10 +1862,10 @@ export default function AdminPanel() {
 
                   <button 
                     type="submit" 
-                    disabled={isAdminDoctorAbsent || availableDatesForAdminDoc.length === 0}
-                    className={`w-full py-3 rounded-xl font-bold text-sm transition shadow-md ${isAdminDoctorAbsent || availableDatesForAdminDoc.length === 0 ? 'bg-slate-300 text-slate-500 cursor-not-allowed' : 'bg-[#008080] hover:bg-[#006666] text-white'}`}
+                    disabled={isSubmittingBooking || isAdminDoctorAbsent || availableDatesForAdminDoc.length === 0}
+                    className={`w-full py-3 rounded-xl font-bold text-sm transition shadow-md ${isSubmittingBooking || isAdminDoctorAbsent || availableDatesForAdminDoc.length === 0 ? 'bg-slate-300 text-slate-500 cursor-not-allowed' : 'bg-[#008080] hover:bg-[#006666] text-white'}`}
                   >
-                    Confirm Appointment
+                    {isSubmittingBooking ? 'Submitting...' : 'Confirm Appointment'}
                   </button>
                 </form>
               )}
@@ -1612,7 +1879,13 @@ export default function AdminPanel() {
                 <div className="text-center py-8">
                   <div className="w-16 h-16 bg-emerald-100 text-emerald-600 rounded-full flex items-center justify-center mx-auto text-3xl mb-4 font-bold">✓</div>
                   <h3 className="text-xl font-bold text-slate-900">Emergency Slot Confirmed!</h3>
-                  <button onClick={() => setQuickSubmitted(false)} className="mt-4 bg-[#008080] text-white px-6 py-2 rounded-xl text-sm font-semibold">
+                  <button
+                    onClick={() => {
+                      setQuickSubmitted(false);
+                      setQuickForm({ name: '', age: '', contact: '', alt_contact: '', note: '', is_referred: false, ref_name: '', ref_phone: '' });
+                    }}
+                    className="mt-4 bg-[#008080] text-white px-6 py-2 rounded-xl text-sm font-semibold"
+                  >
                     Reserve Another
                   </button>
                 </div>
@@ -1656,24 +1929,93 @@ export default function AdminPanel() {
                       </div>
                     </div>
 
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                      <div>
+                        <label className="text-xs font-bold text-slate-700">Main Contact Number <span className="text-rose-500">*</span></label>
+                        <input 
+                          type="tel" 
+                          required 
+                          maxLength={11}
+                          value={quickForm.contact} 
+                          onChange={e => setQuickForm({...quickForm, contact: e.target.value.replace(/\D/g, '')})}
+                          placeholder="11 Digit Mobile Number" 
+                          className="w-full border rounded-xl px-3 py-2.5 text-sm font-mono outline-none focus:ring-2 focus:ring-teal-500 mt-1" 
+                        />
+                      </div>
+                      <div>
+                        <label className="text-xs font-bold text-slate-700">Alternative Number (Optional)</label>
+                        <input 
+                          type="tel" 
+                          maxLength={11}
+                          value={quickForm.alt_contact} 
+                          onChange={e => setQuickForm({...quickForm, alt_contact: e.target.value.replace(/\D/g, '')})}
+                          placeholder="Alternative 11 Digit No" 
+                          className="w-full border rounded-xl px-3 py-2.5 text-sm font-mono outline-none focus:ring-2 focus:ring-teal-500 mt-1" 
+                        />
+                      </div>
+                    </div>
+
                     <div>
-                      <label className="text-xs font-bold text-slate-700">Contact Number <span className="text-rose-500">*</span></label>
+                      <label className="text-xs font-bold text-slate-700">Note (Optional)</label>
                       <input 
-                        type="tel" 
-                        required 
-                        maxLength={11}
-                        value={quickForm.contact} 
-                        onChange={e => setQuickForm({...quickForm, contact: e.target.value.replace(/\D/g, '')})}
-                        placeholder="11 Digit Mobile Number" 
-                        className="w-full border rounded-xl px-3 py-2.5 text-sm font-mono outline-none focus:ring-2 focus:ring-teal-500 mt-1" 
+                        type="text" 
+                        value={quickForm.note} 
+                        onChange={e => setQuickForm({...quickForm, note: e.target.value})}
+                        placeholder="Add patient condition or note..." 
+                        className="w-full border rounded-xl px-3 py-2.5 text-sm outline-none focus:ring-2 focus:ring-teal-500 mt-1" 
                       />
+                    </div>
+
+                    {/* Referred Checkbox Option */}
+                    <div className="bg-teal-50/70 border border-teal-200 rounded-xl p-3">
+                      <label className="flex items-center gap-2 text-xs sm:text-sm font-extrabold text-[#008080] cursor-pointer select-none">
+                        <input
+                          type="checkbox"
+                          checked={quickForm.is_referred}
+                          onChange={e => setQuickForm({ ...quickForm, is_referred: e.target.checked })}
+                          className="w-4 h-4 accent-[#008080] rounded cursor-pointer"
+                        />
+                        <span>Referred by Doctor / Representative (Tick if Referred)</span>
+                      </label>
+
+                      {quickForm.is_referred && (
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mt-3 pt-3 border-t border-teal-200/80">
+                          <div>
+                            <label className="text-xs font-bold text-slate-700">Referred By (Name)</label>
+                            <input
+                              type="text"
+                              value={quickForm.ref_name}
+                              onChange={e => setQuickForm({ ...quickForm, ref_name: e.target.value })}
+                              placeholder="Referrer Name"
+                              className="w-full border bg-white rounded-xl px-3 py-2 text-xs sm:text-sm outline-none focus:ring-2 focus:ring-teal-500 mt-1"
+                            />
+                          </div>
+                          <div>
+                            <label className="text-xs font-bold text-slate-700">Referred Phone Number *</label>
+                            <input
+                              type="tel"
+                              required={quickForm.is_referred}
+                              maxLength={11}
+                              value={quickForm.ref_phone}
+                              onChange={e => setQuickForm({ ...quickForm, ref_phone: e.target.value.replace(/\D/g, '') })}
+                              placeholder="11 Digit Referrer Phone"
+                              className="w-full border bg-white rounded-xl px-3 py-2 text-xs sm:text-sm font-mono outline-none focus:ring-2 focus:ring-teal-500 mt-1"
+                            />
+                          </div>
+                        </div>
+                      )}
                     </div>
 
                     <button 
                       type="submit" 
-                      className="w-full bg-[#008080] hover:bg-[#006666] text-white py-3 rounded-xl font-bold text-sm transition shadow-md mt-2"
+                      disabled={isSubmittingQuick}
+                      className={`w-full py-3 rounded-xl font-bold text-sm transition shadow-md mt-2 ${
+                        isSubmittingQuick
+                          ? 'bg-slate-400 text-white cursor-not-allowed'
+                          : 'bg-[#008080] hover:bg-[#006666] text-white cursor-pointer'
+                      }`}
                     >
-                      Confirm Quick Reservation
+                      {isSubmittingQuick ? 'Submitting Quick Reservation...' : 'Confirm Quick Reservation'}
                     </button>
                   </form>
                 </div>

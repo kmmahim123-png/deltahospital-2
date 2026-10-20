@@ -14,7 +14,16 @@ export default function Home() {
   const [isPackageModalOpen, setIsPackageModalOpen] = useState(false)
   
   const [quickReserveType, setQuickReserveType] = useState('NICU')
-  const [quickForm, setQuickForm] = useState({ name: '', age: '', contact: '' })
+  const [quickForm, setQuickForm] = useState({
+    name: '',
+    age: '',
+    contact: '',
+    alt_contact: '',
+    note: '',
+    is_referred: false,
+    ref_name: '',
+    ref_phone: ''
+  })
   const [quickSubmitted, setQuickSubmitted] = useState(false)
 
   const [reportInvoice, setReportInvoice] = useState('')
@@ -269,7 +278,6 @@ export default function Home() {
     setIsModalOpen(true)
   }
 
-  // Exact Sequential Serial (#4, #5, #6, #7...) matching Admin Panel 100%
   async function handleBookingSubmit(e: React.FormEvent) {
     e.preventDefault()
     if (formData.phone.length !== 11) { alert('Phone number must be exactly 11 digits.'); return; }
@@ -285,8 +293,14 @@ export default function Home() {
         .eq('doctor_id', selectedDoctor.id.toString())
         .eq('booking_date', formData.booking_date)
 
+      let sched = selectedDoctor.schedule
+      if (typeof sched === 'string') {
+        try { sched = JSON.parse(sched) } catch { sched = null }
+      }
+      const reservedBlankCount = (sched && typeof sched._reserved_slots === 'number') ? sched._reserved_slots : 3
+
       const activeListCount = existingBookings ? existingBookings.length : 0
-      const nextSerial = 4 + activeListCount
+      const nextSerial = reservedBlankCount + 1 + activeListCount
       const serialNumStr = `#${nextSerial}`
       const docFee = selectedDoctor.fee || selectedDoctor.follow_up_fee || '500 BDT'
 
@@ -340,25 +354,46 @@ export default function Home() {
     }
   }
 
+  // Quick Reserve Submit with Alternative Number, Note & Referral Option
   async function handleQuickSubmit(e: React.FormEvent) {
     e.preventDefault()
-    if (quickForm.contact.length !== 11) { alert('Contact number must be 11 digits.'); return; }
+    if (quickForm.contact.length !== 11) { alert('Main contact number must be 11 digits.'); return; }
+    if (quickForm.alt_contact && quickForm.alt_contact.length !== 11) { alert('Alternative number must be 11 digits.'); return; }
+    if (quickForm.is_referred && quickForm.ref_phone && quickForm.ref_phone.length !== 11) {
+      alert('Referrer phone number must be 11 digits.');
+      return;
+    }
     
     const serialNumInt = Math.floor(100 + Math.random() * 900)
     const todayStr = getTodayBDDate()
 
+    const combinedPhone = quickForm.alt_contact
+      ? `${quickForm.contact} | Alt:${quickForm.alt_contact}`
+      : quickForm.contact
+
+    const metaParts: string[] = []
+    if (quickForm.note.trim()) {
+      metaParts.push(quickForm.note.trim())
+    }
+    if (quickForm.is_referred && (quickForm.ref_name.trim() || quickForm.ref_phone.trim())) {
+      metaParts.push(`[REF:${quickForm.ref_name.trim() || 'Referrer'}|${quickForm.ref_phone.trim()}]`)
+    }
+    const finalSymptoms = metaParts.length > 0 ? metaParts.join(' ') : ''
+
     try {
-      await supabase.from('bookings').insert({
+      const { error } = await supabase.from('bookings').insert({
         patient_name: quickForm.name,
-        phone: quickForm.contact,
+        phone: combinedPhone,
         doctor_id: `Emergency-${quickReserveType}`,
         booking_date: todayStr,
         age: quickForm.age ? parseInt(quickForm.age) : null,
         patient_type: 'Emergency',
-        symptoms: `Quick Reservation: ${quickReserveType}`,
+        symptoms: finalSymptoms,
         serial_number: serialNumInt,
         status: 'Confirmed'
       })
+
+      if (error) throw error
 
       const customSmsMessage = `Dear ${quickForm.name}, your emergency slot (${quickReserveType}) is confirmed. Serial: EQ#${serialNumInt}. Thank you for choosing Delta Health Care Jatrabari Ltd.`
 
@@ -417,9 +452,9 @@ export default function Home() {
       let bookingQuery = supabase.from('bookings').select('*')
 
       if (!isNaN(numericSerial) && query.length < 10) {
-        bookingQuery = bookingQuery.or(`serial_number.eq.${numericSerial},phone.eq.${query}`)
+        bookingQuery = bookingQuery.or(`serial_number.eq.${numericSerial},phone.ilike.%${query}%`)
       } else {
-        bookingQuery = bookingQuery.eq('phone', query)
+        bookingQuery = bookingQuery.ilike('phone', `%${query}%`)
       }
 
       const { data: bookingData } = await bookingQuery.order('id', { ascending: false }).limit(1)
@@ -614,7 +649,7 @@ export default function Home() {
       </div>
 
       <div className="w-full">
-        {/* Top Header - Guaranteed 100% Equal Width for Bangla & English on ALL devices */}
+        {/* Top Header */}
         <header className="bg-gradient-to-r from-teal-50/90 via-white to-teal-50/90 text-slate-800 py-3.5 px-3 sm:px-12 flex flex-row justify-between items-center gap-2 border-b border-teal-100 shadow-xs w-full">
           <div className="flex items-center gap-2.5 sm:gap-3.5">
             <div className="w-10 h-10 sm:w-12 sm:h-12 flex items-center justify-center bg-white rounded-full p-1.5 shadow-xs border border-teal-200 flex-shrink-0">
@@ -649,11 +684,15 @@ export default function Home() {
           </div>
         </header>
 
-        {/* 2nd Row: Sticky Action Buttons Bar (Left Aligned) */}
+        {/* 2nd Row: Sticky Action Buttons Bar */}
         <div className="sticky top-0 z-30 bg-white/95 backdrop-blur-md shadow-sm border-b border-slate-200 w-full py-2.5 px-3 sm:px-12 flex items-center justify-start">
           <div className="flex items-center justify-start gap-2 sm:gap-3 text-xs font-bold w-full overflow-x-auto scrollbar-hide py-0.5">
             <button 
-              onClick={() => { setQuickSubmitted(false); setQuickForm({ name: '', age: '', contact: '' }); setIsQuickReserveOpen(true); }}
+              onClick={() => {
+                setQuickSubmitted(false);
+                setQuickForm({ name: '', age: '', contact: '', alt_contact: '', note: '', is_referred: false, ref_name: '', ref_phone: '' });
+                setIsQuickReserveOpen(true);
+              }}
               className="border border-rose-500 text-rose-600 hover:bg-rose-600 hover:text-white px-3 sm:px-4 py-1.5 rounded-full text-[10px] sm:text-xs font-black transition uppercase flex items-center gap-1 shadow-xs cursor-pointer bg-rose-50/50 whitespace-nowrap flex-shrink-0"
             >
               <span>⚡</span> Quick Reserve
@@ -679,7 +718,6 @@ export default function Home() {
         <section className="w-full px-3 sm:px-12 py-3 sm:py-6">
           <div className={`w-full bg-gradient-to-r ${heroSlides[currentSlide].bgGradient} rounded-3xl p-5 sm:p-10 flex flex-col md:flex-row items-center justify-between shadow-xs border ${heroSlides[currentSlide].border} relative overflow-hidden transition-all duration-500`}>
             
-            {/* Angled 3D Picture Frame */}
             <div className="w-full md:w-auto flex justify-center z-10 mb-5 md:mb-0 md:order-2 py-2">
               <div className="angled-doctor-frame bg-white p-1.5 rounded-lg w-[190px] sm:w-[250px] h-[210px] sm:h-[260px] flex items-center justify-center overflow-hidden">
                 <img 
@@ -691,7 +729,6 @@ export default function Home() {
               </div>
             </div>
 
-            {/* Text & Button */}
             <div className="max-w-xl z-10 text-center md:text-left w-full md:order-1">
               <h1 className="text-lg sm:text-3xl md:text-5xl font-black text-slate-900 leading-snug">
                 Book Doctor Appointments <span className="text-[#008080]">Hassle-Free</span>
@@ -740,7 +777,6 @@ export default function Home() {
               <p className="text-[10px] sm:text-xs text-slate-500">Qualified specialists ready to assist you</p>
             </div>
 
-            {/* Department Filter Row */}
             <div className="w-full md:w-auto py-1">
               <div className="flex items-center gap-1.5 flex-wrap">
                 {departments.map((dept, idx) => (
@@ -779,7 +815,6 @@ export default function Home() {
               >
                 {getDoctorBadge(doc.days, doc.status)}
 
-                {/* Angled 3D Doctor Image Frame inside Card */}
                 <div className="w-full h-44 sm:h-52 mx-auto mb-3 flex items-center justify-center relative py-2 px-3 bg-gradient-to-b from-slate-50 to-white rounded-xl">
                   <div className="angled-doctor-frame w-full h-full bg-white p-1 rounded-md overflow-hidden relative">
                     <img 
@@ -1026,7 +1061,7 @@ export default function Home() {
         </div>
       )}
 
-      {/* Quick Reserve Modal */}
+      {/* Quick Reserve Modal (With Alternative Number, Note, and Referred Checkbox) */}
       {isQuickReserveOpen && (
         <div className="fixed inset-0 bg-black/60 backdrop-blur-xs flex items-center justify-center p-3 z-50 overflow-y-auto">
           <div className="bg-white rounded-2xl max-w-lg w-full p-5 sm:p-6 shadow-2xl relative my-auto max-h-[92vh] overflow-y-auto">
@@ -1046,7 +1081,7 @@ export default function Home() {
                 <div className="text-center mb-4">
                   <div className="w-10 h-10 bg-rose-50 text-rose-600 rounded-full flex items-center justify-center mx-auto text-base mb-1.5 border border-rose-100">🏥</div>
                   <h3 className="text-base font-black text-slate-900">Book Emergency Slot</h3>
-                  <p className="text-[11px] text-slate-500">Select service category and provide contact</p>
+                  <p className="text-[11px] text-slate-500">Select service category and provide contact details</p>
                 </div>
 
                 <div className="grid grid-cols-5 gap-1.5 mb-3">
@@ -1087,17 +1122,81 @@ export default function Home() {
                     </div>
                   </div>
 
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                    <div>
+                      <label className="text-xs font-bold text-slate-700">Main Contact Number *</label>
+                      <input 
+                        type="tel" 
+                        required 
+                        maxLength={11}
+                        value={quickForm.contact} 
+                        onChange={e => setQuickForm({...quickForm, contact: e.target.value.replace(/\D/g, '')})}
+                        placeholder="11 Digit Mobile Number" 
+                        className="w-full border rounded-xl px-3 py-2 text-xs font-mono outline-none focus:ring-2 focus:ring-teal-500 mt-1" 
+                      />
+                    </div>
+                    <div>
+                      <label className="text-xs font-bold text-slate-700">Alternative Number (Optional)</label>
+                      <input 
+                        type="tel" 
+                        maxLength={11}
+                        value={quickForm.alt_contact} 
+                        onChange={e => setQuickForm({...quickForm, alt_contact: e.target.value.replace(/\D/g, '')})}
+                        placeholder="Alternative 11 Digit No" 
+                        className="w-full border rounded-xl px-3 py-2 text-xs font-mono outline-none focus:ring-2 focus:ring-teal-500 mt-1" 
+                      />
+                    </div>
+                  </div>
+
                   <div>
-                    <label className="text-xs font-bold text-slate-700">Contact Number *</label>
+                    <label className="text-xs font-bold text-slate-700">Note (Optional)</label>
                     <input 
-                      type="tel" 
-                      required 
-                      maxLength={11}
-                      value={quickForm.contact} 
-                      onChange={e => setQuickForm({...quickForm, contact: e.target.value.replace(/\D/g, '')})}
-                      placeholder="11 Digit Mobile Number" 
-                      className="w-full border rounded-xl px-3 py-2 text-xs font-mono outline-none focus:ring-2 focus:ring-teal-500 mt-1" 
+                      type="text" 
+                      value={quickForm.note} 
+                      onChange={e => setQuickForm({...quickForm, note: e.target.value})}
+                      placeholder="Add patient condition or note..." 
+                      className="w-full border rounded-xl px-3 py-2 text-xs outline-none focus:ring-2 focus:ring-teal-500 mt-1" 
                     />
+                  </div>
+
+                  {/* Referred Tick Mark Option */}
+                  <div className="bg-teal-50/70 border border-teal-200 rounded-xl p-2.5">
+                    <label className="flex items-center gap-2 text-xs font-extrabold text-[#008080] cursor-pointer select-none">
+                      <input
+                        type="checkbox"
+                        checked={quickForm.is_referred}
+                        onChange={e => setQuickForm({ ...quickForm, is_referred: e.target.checked })}
+                        className="w-4 h-4 accent-[#008080] rounded cursor-pointer"
+                      />
+                      <span>Referred by Doctor / Representative (Tick if Referred)</span>
+                    </label>
+
+                    {quickForm.is_referred && (
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 mt-2.5 pt-2 border-t border-teal-200/80">
+                        <div>
+                          <label className="text-[11px] font-bold text-slate-700">Referred By (Name)</label>
+                          <input
+                            type="text"
+                            value={quickForm.ref_name}
+                            onChange={e => setQuickForm({ ...quickForm, ref_name: e.target.value })}
+                            placeholder="Referrer Name"
+                            className="w-full border bg-white rounded-lg px-2.5 py-1.5 text-xs outline-none focus:ring-2 focus:ring-teal-500 mt-0.5"
+                          />
+                        </div>
+                        <div>
+                          <label className="text-[11px] font-bold text-slate-700">Referred Phone Number *</label>
+                          <input
+                            type="tel"
+                            required={quickForm.is_referred}
+                            maxLength={11}
+                            value={quickForm.ref_phone}
+                            onChange={e => setQuickForm({ ...quickForm, ref_phone: e.target.value.replace(/\D/g, '') })}
+                            placeholder="11 Digit Referrer Phone"
+                            className="w-full border bg-white rounded-lg px-2.5 py-1.5 text-xs font-mono outline-none focus:ring-2 focus:ring-teal-500 mt-0.5"
+                          />
+                        </div>
+                      </div>
+                    )}
                   </div>
 
                   <button 
