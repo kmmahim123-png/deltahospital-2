@@ -18,13 +18,14 @@ export default function Home() {
     name: '',
     age: '',
     contact: '',
-    alt_contact: '',
     note: '',
     is_referred: false,
     ref_name: '',
     ref_phone: ''
   })
   const [quickSubmitted, setQuickSubmitted] = useState(false)
+  const [isSubmittingQuick, setIsSubmittingQuick] = useState(false)
+  const [isSubmittingBooking, setIsSubmittingBooking] = useState(false)
 
   const [reportInvoice, setReportInvoice] = useState('')
   const [reportResult, setReportResult] = useState<any>(null)
@@ -52,6 +53,29 @@ export default function Home() {
     return `${year}-${month}-${day}`
   }
 
+  const get7DaysAgoBDDate = () => {
+    const now = new Date()
+    const bdTime = new Date(now.toLocaleString('en-US', { timeZone: 'Asia/Dhaka' }))
+    bdTime.setDate(bdTime.getDate() - 7)
+    const year = bdTime.getFullYear()
+    const month = String(bdTime.getMonth() + 1).padStart(2, '0')
+    const day = String(bdTime.getDate()).padStart(2, '0')
+    return `${year}-${month}-${day}`
+  }
+
+  const getCurrentBDDateTimeStr = () => {
+    const now = new Date()
+    return now.toLocaleString('en-US', {
+      timeZone: 'Asia/Dhaka',
+      day: '2-digit',
+      month: 'short',
+      year: 'numeric',
+      hour: '2-digit',
+      minute: '2-digit',
+      hour12: true
+    })
+  }
+
   const parseDoctorDaysArray = (rawDays: any, fallbackDays?: string[]): string[] => {
     let result: string[] = []
     if (Array.isArray(rawDays)) {
@@ -69,8 +93,8 @@ export default function Home() {
 
   const syncLiveDoctorsWithDatabase = useCallback(async () => {
     try {
-      const todayStr = getTodayBDDate()
-      await supabase.from('bookings').delete().lt('booking_date', todayStr)
+      const cutoffDateStr = get7DaysAgoBDDate()
+      await supabase.from('bookings').delete().lt('booking_date', cutoffDateStr)
 
       const { data: dbData } = await supabase.from('doctors').select('*').order('id', { ascending: true })
       const dbList = dbData || []
@@ -280,12 +304,14 @@ export default function Home() {
 
   async function handleBookingSubmit(e: React.FormEvent) {
     e.preventDefault()
+    if (isSubmittingBooking) return
     if (formData.phone.length !== 11) { alert('Phone number must be exactly 11 digits.'); return; }
     if (isDoctorAbsent || selectedDoctor?.status === 'Absent' || availableDatesForDoc.length === 0) { 
       alert('Selected doctor is currently Absent or unavailable for appointment.'); 
       return; 
     }
 
+    setIsSubmittingBooking(true)
     try {
       const { data: existingBookings } = await supabase
         .from('bookings')
@@ -303,6 +329,8 @@ export default function Home() {
       const nextSerial = reservedBlankCount + 1 + activeListCount
       const serialNumStr = `#${nextSerial}`
       const docFee = selectedDoctor.fee || selectedDoctor.follow_up_fee || '500 BDT'
+      const bookedAtStr = getCurrentBDDateTimeStr()
+      const finalSymptoms = `[TIME:${bookedAtStr}] ${formData.note || ''}`.trim()
 
       const { error } = await supabase.from('bookings').insert({
         patient_name: formData.name,
@@ -311,7 +339,7 @@ export default function Home() {
         booking_date: formData.booking_date,
         age: formData.age ? parseInt(formData.age) : null,
         patient_type: 'Online',
-        symptoms: formData.note || '',
+        symptoms: finalSymptoms,
         serial_number: nextSerial,
         status: 'Confirmed'
       })
@@ -345,57 +373,66 @@ export default function Home() {
         doctorDegree: selectedDoctor.degree,
         fee: docFee,
         serialNo: serialNumStr,
-        bookingTime: new Date().toLocaleString()
+        bookingTime: bookedAtStr
       }
       setBookedData(newBooking)
       setSubmitted(true)
     } catch (err: any) {
       alert('Booking save failed: ' + err.message)
+    } finally {
+      setIsSubmittingBooking(false)
     }
   }
 
-  // Quick Reserve Submit with Alternative Number, Note & Referral Option
+  // মেইন পেজের Quick Reserve সাবমিট: শুধুমাত্র রোগীর নাম্বারে SMS যাবে (রেফারেল নাম্বারে যাবে না)
   async function handleQuickSubmit(e: React.FormEvent) {
     e.preventDefault()
-    if (quickForm.contact.length !== 11) { alert('Main contact number must be 11 digits.'); return; }
-    if (quickForm.alt_contact && quickForm.alt_contact.length !== 11) { alert('Alternative number must be 11 digits.'); return; }
+    if (isSubmittingQuick) return
+    if (quickForm.contact.length !== 11) { alert('Contact number must be 11 digits.'); return; }
     if (quickForm.is_referred && quickForm.ref_phone && quickForm.ref_phone.length !== 11) {
       alert('Referrer phone number must be 11 digits.');
       return;
     }
     
-    const serialNumInt = Math.floor(100 + Math.random() * 900)
+    setIsSubmittingQuick(true)
     const todayStr = getTodayBDDate()
 
-    const combinedPhone = quickForm.alt_contact
-      ? `${quickForm.contact} | Alt:${quickForm.alt_contact}`
-      : quickForm.contact
-
-    const metaParts: string[] = []
-    if (quickForm.note.trim()) {
-      metaParts.push(quickForm.note.trim())
-    }
-    if (quickForm.is_referred && (quickForm.ref_name.trim() || quickForm.ref_phone.trim())) {
-      metaParts.push(`[REF:${quickForm.ref_name.trim() || 'Referrer'}|${quickForm.ref_phone.trim()}]`)
-    }
-    const finalSymptoms = metaParts.length > 0 ? metaParts.join(' ') : ''
-
     try {
+      const { data: existingEmergencies } = await supabase
+        .from('bookings')
+        .select('id, doctor_id, patient_type')
+        .eq('booking_date', todayStr)
+
+      const emergencyCount = (existingEmergencies || []).filter(
+        (b: any) => b?.doctor_id?.toString().startsWith('Emergency-') || b?.patient_type === 'Emergency'
+      ).length
+      const nextEqSerial = emergencyCount + 1
+      const bookedAtStr = getCurrentBDDateTimeStr()
+
+      const metaParts: string[] = ['[SRC:Online]', `[TIME:${bookedAtStr}]`]
+      if (quickForm.note.trim()) {
+        metaParts.push(quickForm.note.trim())
+      }
+      if (quickForm.is_referred && (quickForm.ref_name.trim() || quickForm.ref_phone.trim())) {
+        metaParts.push(`[REF:${quickForm.ref_name.trim() || 'Referrer'}|${quickForm.ref_phone.trim()}]`)
+      }
+      const finalSymptoms = metaParts.join(' ')
+
       const { error } = await supabase.from('bookings').insert({
         patient_name: quickForm.name,
-        phone: combinedPhone,
+        phone: quickForm.contact,
         doctor_id: `Emergency-${quickReserveType}`,
         booking_date: todayStr,
         age: quickForm.age ? parseInt(quickForm.age) : null,
         patient_type: 'Emergency',
         symptoms: finalSymptoms,
-        serial_number: serialNumInt,
+        serial_number: nextEqSerial,
         status: 'Confirmed'
       })
 
       if (error) throw error
 
-      const customSmsMessage = `Dear ${quickForm.name}, your emergency slot (${quickReserveType}) is confirmed. Serial: EQ#${serialNumInt}. Thank you for choosing Delta Health Care Jatrabari Ltd.`
+      const customSmsMessage = `Dear ${quickForm.name}, your emergency slot (${quickReserveType}) is confirmed. Serial: EQ#${nextEqSerial}. Thank you for choosing Delta Health Care Jatrabari Ltd.`
 
       try {
         await fetch('https://client.giosms.com/api/v1/send', {
@@ -419,6 +456,8 @@ export default function Home() {
       setQuickSubmitted(true)
     } catch (err: any) {
       alert('Emergency request failed: ' + err.message)
+    } finally {
+      setIsSubmittingQuick(false)
     }
   }
 
@@ -472,6 +511,7 @@ export default function Home() {
     }
   }
 
+  // সাদা-কালো প্রিন্টারের জন্য কালো হেডার ("ডেলটা হেলথ্ কেয়ার যাত্রাবাড়ী লিমিটেড")
   const handlePrintLabReportFromHome = (report: any) => {
     const printWin = window.open('', '', 'left=0,top=0,width=850,height=750')
     if (!printWin) return
@@ -482,17 +522,17 @@ export default function Home() {
           <title>Lab Report - ${report.invoice_no}</title>
           <style>
             @page { size: A4; margin: 15mm; }
-            body { font-family: 'Segoe UI', Arial, sans-serif; color: #0f172a; padding: 10px; }
-            .header { display: flex; justify-content: space-between; align-items: center; border-bottom: 3px solid #008080; padding-bottom: 12px; margin-bottom: 20px; }
-            .title-bn { font-size: 20px; font-weight: 900; color: #008080; margin: 0; }
-            .title-en { font-size: 13px; font-weight: 800; color: #e11d48; margin: 2px 0; }
-            .addr { font-size: 11px; color: #475569; margin: 0; }
-            .meta-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; background: #f8fafc; border: 1px solid #cbd5e1; border-radius: 10px; padding: 14px; font-size: 12px; margin-bottom: 20px; }
-            .meta-row { display: flex; justify-content: space-between; border-bottom: 1px dashed #e2e8f0; padding-bottom: 4px; }
-            .report-title { text-align: center; background: #008080; color: #fff; font-weight: 800; padding: 8px; border-radius: 6px; font-size: 14px; letter-spacing: 1px; margin-bottom: 20px; text-transform: uppercase; }
-            .result-box { min-height: 280px; border: 1px solid #e2e8f0; border-radius: 10px; padding: 18px; font-size: 13px; line-height: 1.7; white-space: pre-wrap; background: #fff; }
-            .footer { margin-top: 50px; display: flex; justify-content: space-between; font-size: 12px; color: #334155; padding-top: 20px; }
-            .sig-line { border-top: 1px solid #334155; width: 180px; text-align: center; padding-top: 6px; font-weight: 700; }
+            body { font-family: 'Segoe UI', Arial, sans-serif; color: #000000; padding: 10px; }
+            .header { display: flex; justify-content: space-between; align-items: center; border-bottom: 3px solid #000000; padding-bottom: 12px; margin-bottom: 20px; }
+            .title-bn { font-size: 22px; font-weight: 900; color: #000000; margin: 0; }
+            .title-en { font-size: 13px; font-weight: 800; color: #000000; margin: 2px 0; }
+            .addr { font-size: 11px; color: #000000; margin: 0; }
+            .meta-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; border: 1.5px solid #000000; border-radius: 8px; padding: 14px; font-size: 12px; margin-bottom: 20px; }
+            .meta-row { display: flex; justify-content: space-between; border-bottom: 1px dashed #000000; padding-bottom: 4px; }
+            .report-title { text-align: center; border: 2px solid #000000; color: #000000; font-weight: 900; padding: 8px; border-radius: 6px; font-size: 14px; letter-spacing: 1px; margin-bottom: 20px; text-transform: uppercase; }
+            .result-box { min-height: 280px; border: 1.5px solid #000000; border-radius: 8px; padding: 18px; font-size: 13px; line-height: 1.7; white-space: pre-wrap; color: #000000; }
+            .footer { margin-top: 50px; display: flex; justify-content: space-between; font-size: 12px; color: #000000; padding-top: 20px; }
+            .sig-line { border-top: 1.5px solid #000000; width: 180px; text-align: center; padding-top: 6px; font-weight: 700; color: #000000; }
           </style>
         </head>
         <body>
@@ -502,10 +542,10 @@ export default function Home() {
               <h2 class="title-en">DELTA HEALTH CARE JATRABARI LIMITED</h2>
               <p class="addr">169/1-B, West Dholaipar, Jatrabari, Dhaka | Hotline: 09666720320</p>
             </div>
-            <div style="text-align: right;">
-              <div style="font-size: 16px; font-weight: 900; color: #008080;">Bill No: ${report.invoice_no}</div>
-              <div style="font-size: 11px; color: #64748b;">Date: ${report.test_date}</div>
-              <div style="font-size: 11px; font-weight: 700; color: #059669;">Status: ${report.delivery_status}</div>
+            <div style="text-align: right; color: #000000;">
+              <div style="font-size: 16px; font-weight: 900;">Bill No: ${report.invoice_no}</div>
+              <div style="font-size: 11px; font-weight: 700;">Date: ${report.test_date}</div>
+              <div style="font-size: 11px; font-weight: 700;">Status: ${report.delivery_status}</div>
             </div>
           </div>
 
@@ -524,7 +564,7 @@ export default function Home() {
 
           ${report.file_url && report.file_url.startsWith('data:image') ? `
             <div style="margin-top: 15px; text-align: center;">
-              <img src="${report.file_url}" style="max-width: 100%; max-height: 360px; border-radius: 8px; border: 1px solid #cbd5e1;" />
+              <img src="${report.file_url}" style="max-width: 100%; max-height: 360px; border-radius: 8px; border: 1px solid #000;" />
             </div>
           ` : ''}
 
@@ -541,6 +581,7 @@ export default function Home() {
     setTimeout(() => { printWin.print() }, 400)
   }
 
+  // সাদা-কালো প্রিন্টারের জন্য পিওর কালো (#000000) অ্যাপয়েন্টমেন্ট স্লিপ প্রিন্ট
   const handlePrintSlip = () => {
     const printContent = document.getElementById("printable-slip");
     if (!printContent) return;
@@ -551,17 +592,17 @@ export default function Home() {
           <title>Appointment Slip - Delta Health Care</title>
           <style>
             @page { size: auto; margin: 10mm; }
-            body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; padding: 15px; color: #1e293b; background: #fff; }
-            .slip-box { max-width: 420px; margin: auto; border: 1.5px solid #008080; border-radius: 12px; padding: 20px; background: #fff; }
-            .header { text-align: center; border-bottom: 2px solid #008080; padding-bottom: 10px; margin-bottom: 15px; }
-            .header h2 { color: #008080; margin: 0; font-size: 18px; font-weight: 800; }
-            .header p { font-size: 11px; color: #64748b; margin: 3px 0 0 0; }
-            .serial-box { text-align: center; background: #f0fdf4; border: 1px dashed #10b981; padding: 8px; border-radius: 8px; margin-bottom: 15px; }
-            .serial-box span { font-size: 18px; font-weight: 900; color: #047857; }
-            .row { display: flex; justify-content: space-between; margin-bottom: 10px; font-size: 13px; border-bottom: 1px solid #f1f5f9; padding-bottom: 6px; }
-            .label { font-weight: 600; color: #475569; }
-            .value { font-weight: 700; color: #0f172a; text-align: right; }
-            .footer-note { text-align: center; font-size: 10px; color: #94a3b8; margin-top: 15px; border-top: 1px solid #e2e8f0; padding-top: 8px; }
+            body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; padding: 15px; color: #000000; background: #fff; }
+            .slip-box { max-width: 420px; margin: auto; border: 2px solid #000000; border-radius: 12px; padding: 20px; background: #fff; }
+            .header { text-align: center; border-bottom: 2px solid #000000; padding-bottom: 10px; margin-bottom: 15px; }
+            .header h2 { color: #000000; margin: 0; font-size: 19px; font-weight: 900; }
+            .header p { font-size: 11px; color: #000000; margin: 3px 0 0 0; font-weight: 700; }
+            .serial-box { text-align: center; border: 1.5px dashed #000000; padding: 8px; border-radius: 8px; margin-bottom: 15px; }
+            .serial-box span { font-size: 18px; font-weight: 900; color: #000000; }
+            .row { display: flex; justify-content: space-between; margin-bottom: 10px; font-size: 13px; border-bottom: 1px solid #000000; padding-bottom: 6px; }
+            .label { font-weight: 700; color: #000000; }
+            .value { font-weight: 800; color: #000000; text-align: right; }
+            .footer-note { text-align: center; font-size: 10px; color: #000000; margin-top: 15px; border-top: 1px solid #000000; padding-top: 8px; font-weight: 600; }
           </style>
         </head>
         <body>
@@ -571,7 +612,7 @@ export default function Home() {
               <p>Official Appointment Confirmation Slip</p>
             </div>
             <div class="serial-box">
-              <span style="font-size: 12px; display: block; color: #065f46;">ASSIGNED SERIAL NUMBER</span>
+              <span style="font-size: 12px; display: block; color: #000000;">ASSIGNED SERIAL NUMBER</span>
               <span>${printContent.getAttribute("data-serial")}</span>
             </div>
             ${printContent.innerHTML}
@@ -690,7 +731,7 @@ export default function Home() {
             <button 
               onClick={() => {
                 setQuickSubmitted(false);
-                setQuickForm({ name: '', age: '', contact: '', alt_contact: '', note: '', is_referred: false, ref_name: '', ref_phone: '' });
+                setQuickForm({ name: '', age: '', contact: '', note: '', is_referred: false, ref_name: '', ref_phone: '' });
                 setIsQuickReserveOpen(true);
               }}
               className="border border-rose-500 text-rose-600 hover:bg-rose-600 hover:text-white px-3 sm:px-4 py-1.5 rounded-full text-[10px] sm:text-xs font-black transition uppercase flex items-center gap-1 shadow-xs cursor-pointer bg-rose-50/50 whitespace-nowrap flex-shrink-0"
@@ -1061,7 +1102,7 @@ export default function Home() {
         </div>
       )}
 
-      {/* Quick Reserve Modal (With Alternative Number, Note, and Referred Checkbox) */}
+      {/* Quick Reserve Modal (Alternative Number Removed) */}
       {isQuickReserveOpen && (
         <div className="fixed inset-0 bg-black/60 backdrop-blur-xs flex items-center justify-center p-3 z-50 overflow-y-auto">
           <div className="bg-white rounded-2xl max-w-lg w-full p-5 sm:p-6 shadow-2xl relative my-auto max-h-[92vh] overflow-y-auto">
@@ -1122,30 +1163,17 @@ export default function Home() {
                     </div>
                   </div>
 
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-                    <div>
-                      <label className="text-xs font-bold text-slate-700">Main Contact Number *</label>
-                      <input 
-                        type="tel" 
-                        required 
-                        maxLength={11}
-                        value={quickForm.contact} 
-                        onChange={e => setQuickForm({...quickForm, contact: e.target.value.replace(/\D/g, '')})}
-                        placeholder="11 Digit Mobile Number" 
-                        className="w-full border rounded-xl px-3 py-2 text-xs font-mono outline-none focus:ring-2 focus:ring-teal-500 mt-1" 
-                      />
-                    </div>
-                    <div>
-                      <label className="text-xs font-bold text-slate-700">Alternative Number (Optional)</label>
-                      <input 
-                        type="tel" 
-                        maxLength={11}
-                        value={quickForm.alt_contact} 
-                        onChange={e => setQuickForm({...quickForm, alt_contact: e.target.value.replace(/\D/g, '')})}
-                        placeholder="Alternative 11 Digit No" 
-                        className="w-full border rounded-xl px-3 py-2 text-xs font-mono outline-none focus:ring-2 focus:ring-teal-500 mt-1" 
-                      />
-                    </div>
+                  <div>
+                    <label className="text-xs font-bold text-slate-700">Contact Number *</label>
+                    <input 
+                      type="tel" 
+                      required 
+                      maxLength={11}
+                      value={quickForm.contact} 
+                      onChange={e => setQuickForm({...quickForm, contact: e.target.value.replace(/\D/g, '')})}
+                      placeholder="11 Digit Mobile Number" 
+                      className="w-full border rounded-xl px-3 py-2 text-xs font-mono outline-none focus:ring-2 focus:ring-teal-500 mt-1" 
+                    />
                   </div>
 
                   <div>
@@ -1201,9 +1229,14 @@ export default function Home() {
 
                   <button 
                     type="submit" 
-                    className="w-full bg-[#008080] hover:bg-[#006666] text-white py-2.5 rounded-xl font-bold text-xs transition shadow-md mt-1"
+                    disabled={isSubmittingQuick}
+                    className={`w-full py-2.5 rounded-xl font-bold text-xs transition shadow-md mt-1 ${
+                      isSubmittingQuick
+                        ? 'bg-slate-400 text-white cursor-not-allowed'
+                        : 'bg-[#008080] hover:bg-[#006666] text-white cursor-pointer'
+                    }`}
                   >
-                    Confirm Quick Reservation
+                    {isSubmittingQuick ? 'Submitting Quick Reservation...' : 'Confirm Quick Reservation'}
                   </button>
                 </form>
               </div>
@@ -1236,29 +1269,33 @@ export default function Home() {
                   data-serial={bookedData.serialNo}
                   className="bg-slate-50 border border-slate-200 rounded-xl p-3 mt-3 text-left text-xs space-y-2"
                 >
-                  <div className="flex justify-between border-b pb-1.5">
-                    <span className="font-semibold text-slate-600">Patient:</span>
-                    <span className="font-bold text-slate-900">{bookedData.name}</span>
+                  <div className="row flex justify-between border-b pb-1.5">
+                    <span className="label font-semibold text-slate-600">Patient:</span>
+                    <span className="value font-bold text-slate-900">{bookedData.name}</span>
                   </div>
-                  <div className="flex justify-between border-b pb-1.5">
-                    <span className="font-semibold text-slate-600">Phone:</span>
-                    <span className="font-mono font-bold text-slate-900">{bookedData.phone}</span>
+                  <div className="row flex justify-between border-b pb-1.5">
+                    <span className="label font-semibold text-slate-600">Phone:</span>
+                    <span className="value font-mono font-bold text-slate-900">{bookedData.phone}</span>
                   </div>
-                  <div className="flex justify-between border-b pb-1.5">
-                    <span className="font-semibold text-slate-600">Doctor:</span>
-                    <span className="font-bold text-[#008080]">{bookedData.doctorName}</span>
+                  <div className="row flex justify-between border-b pb-1.5">
+                    <span className="label font-semibold text-slate-600">Doctor:</span>
+                    <span className="value font-bold text-[#008080]">{bookedData.doctorName}</span>
                   </div>
-                  <div className="flex justify-between border-b pb-1.5">
-                    <span className="font-semibold text-slate-600">Date:</span>
-                    <span className="font-bold text-slate-900">{bookedData.booking_date}</span>
+                  <div className="row flex justify-between border-b pb-1.5">
+                    <span className="label font-semibold text-slate-600">Appt. Date:</span>
+                    <span className="value font-bold text-slate-900">{bookedData.booking_date}</span>
                   </div>
-                  <div className="flex justify-between border-b pb-1.5">
-                    <span className="font-semibold text-slate-600">Serial:</span>
-                    <span className="font-bold text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded border border-emerald-200">{bookedData.serialNo}</span>
+                  <div className="row flex justify-between border-b pb-1.5">
+                    <span className="label font-semibold text-slate-600">Booked On:</span>
+                    <span className="value font-mono font-bold text-slate-800">{bookedData.bookingTime}</span>
                   </div>
-                  <div className="flex justify-between items-center">
-                    <span className="font-semibold text-slate-600">Fee:</span>
-                    <span className="font-bold text-slate-900">{bookedData.fee}</span>
+                  <div className="row flex justify-between border-b pb-1.5">
+                    <span className="label font-semibold text-slate-600">Serial:</span>
+                    <span className="value font-bold text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded border border-emerald-200">{bookedData.serialNo}</span>
+                  </div>
+                  <div className="row flex justify-between items-center">
+                    <span className="label font-semibold text-slate-600">Fee:</span>
+                    <span className="value font-bold text-slate-900">{bookedData.fee}</span>
                   </div>
                 </div>
 
@@ -1421,10 +1458,10 @@ export default function Home() {
 
                   <button 
                     type="submit" 
-                    disabled={isDoctorAbsent || selectedDoctor?.status === 'Absent' || availableDatesForDoc.length === 0}
-                    className={`w-full py-2.5 rounded-xl font-bold text-xs transition mt-1 ${isDoctorAbsent || selectedDoctor?.status === 'Absent' || availableDatesForDoc.length === 0 ? 'bg-slate-300 text-slate-500 cursor-not-allowed' : 'bg-[#008080] hover:bg-[#006666] text-white'}`}
+                    disabled={isSubmittingBooking || isDoctorAbsent || selectedDoctor?.status === 'Absent' || availableDatesForDoc.length === 0}
+                    className={`w-full py-2.5 rounded-xl font-bold text-xs transition mt-1 ${isSubmittingBooking || isDoctorAbsent || selectedDoctor?.status === 'Absent' || availableDatesForDoc.length === 0 ? 'bg-slate-300 text-slate-500 cursor-not-allowed' : 'bg-[#008080] hover:bg-[#006666] text-white'}`}
                   >
-                    {selectedDoctor?.status === 'Absent' ? 'Appointment Closed (Absent)' : 'Submit Appointment'}
+                    {selectedDoctor?.status === 'Absent' ? 'Appointment Closed (Absent)' : isSubmittingBooking ? 'Submitting...' : 'Submit Appointment'}
                   </button>
                 </form>
               </div>

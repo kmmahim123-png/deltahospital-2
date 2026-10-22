@@ -69,7 +69,6 @@ export default function AdminPanel() {
     name: '',
     age: '',
     contact: '',
-    alt_contact: '',
     note: '',
     is_referred: false,
     ref_name: '',
@@ -100,6 +99,42 @@ export default function AdminPanel() {
     const month = String(bdTime.getMonth() + 1).padStart(2, '0')
     const day = String(bdTime.getDate()).padStart(2, '0')
     return `${year}-${month}-${day}`
+  }
+
+  // ৭ দিন আগের তারিখ বের করার ফাংশন (যাতে ৭ দিন পর ডাটা ডিলিট হয়)
+  const get7DaysAgoBDDate = () => {
+    const now = new Date()
+    const bdTime = new Date(now.toLocaleString('en-US', { timeZone: 'Asia/Dhaka' }))
+    bdTime.setDate(bdTime.getDate() - 7)
+    const year = bdTime.getFullYear()
+    const month = String(bdTime.getMonth() + 1).padStart(2, '0')
+    const day = String(bdTime.getDate()).padStart(2, '0')
+    return `${year}-${month}-${day}`
+  }
+
+  // বর্তমান তারিখ ও সময় সুন্দর ফরম্যাটে নেওয়ার ফাংশন (Booked At)
+  const getCurrentBDDateTimeStr = () => {
+    const now = new Date()
+    return now.toLocaleString('en-US', {
+      timeZone: 'Asia/Dhaka',
+      day: '2-digit',
+      month: 'short',
+      year: 'numeric',
+      hour: '2-digit',
+      minute: '2-digit',
+      hour12: true
+    })
+  }
+
+  // SMS-এ স্টার (*) ছাড়াই নাম বোল্ড দেখানোর জন্য Unicode Bold কনভার্টার (যেমন: PARVEZ -> 𝗣𝗔𝗥𝗩𝗘𝗭)
+  const toUnicodeBold = (text: string) => {
+    return text.split('').map(char => {
+      const code = char.charCodeAt(0)
+      if (code >= 65 && code <= 90) return String.fromCodePoint(0x1D5D4 + (code - 65))
+      if (code >= 97 && code <= 122) return String.fromCodePoint(0x1D5EE + (code - 97))
+      if (code >= 48 && code <= 57) return String.fromCodePoint(0x1D7EC + (code - 48))
+      return char
+    }).join('')
   }
 
   const getDoctorReservedSlots = (doc: any): number => {
@@ -138,24 +173,40 @@ export default function AdminPanel() {
 
   const parseAppointmentDetails = (app: any) => {
     const rawPhone = app.phone || ''
-    const phoneParts = rawPhone.split('|').map((s: string) => s.trim())
-    const mainPhone = phoneParts[0] || ''
-    let altPhone = ''
-    phoneParts.forEach((p: string) => {
-      if (p.toLowerCase().startsWith('alt:')) {
-        altPhone = p.replace(/alt:/i, '').trim()
-      }
-    })
+    const mainPhone = rawPhone.split('|')[0]?.trim() || ''
 
     let rawSymptoms = app.symptoms || ''
     let refName = ''
     let refPhone = ''
+    let bookedAt = ''
 
-    const refMatch = rawSymptoms.match(/\[REF:(.*?)\Vert{}(.*?)\]/)
+    const refMatch = rawSymptoms.match(/\[REF:(.*?)\|(.*?)\]/)
     if (refMatch) {
       refName = refMatch[1]?.trim() || ''
       refPhone = refMatch[2]?.trim() || ''
       rawSymptoms = rawSymptoms.replace(refMatch[0], '').trim()
+    }
+
+    const timeMatch = rawSymptoms.match(/\[TIME:(.*?)\]/)
+    if (timeMatch) {
+      bookedAt = timeMatch[1]?.trim() || ''
+      rawSymptoms = rawSymptoms.replace(timeMatch[0], '').trim()
+    } else if (app.created_at) {
+      try {
+        bookedAt = new Date(app.created_at).toLocaleString('en-US', {
+          timeZone: 'Asia/Dhaka',
+          day: '2-digit',
+          month: 'short',
+          year: 'numeric',
+          hour: '2-digit',
+          minute: '2-digit',
+          hour12: true
+        })
+      } catch {
+        bookedAt = app.booking_date || '-'
+      }
+    } else {
+      bookedAt = app.booking_date || '-'
     }
 
     rawSymptoms = rawSymptoms.replace(/\[SRC:.*?\]/g, '').trim()
@@ -163,10 +214,10 @@ export default function AdminPanel() {
 
     return {
       mainPhone,
-      altPhone,
       cleanNote: rawSymptoms,
       refName,
-      refPhone
+      refPhone,
+      bookedAt
     }
   }
 
@@ -272,11 +323,12 @@ export default function AdminPanel() {
     }
   }
 
+  // ৭ দিনের পুরনো ডাটা অটো-ডিলিট করা হবে এবং বিগত ৭ দিন থেকে আগামী ৭ দিনের ডাটা থাকবে
   async function cleanupPastBookingsAndFetch(currentDoctorsList?: any[]) {
     try {
       const activeDocs = currentDoctorsList || doctors
-      const todayStr = getTodayBDDate()
-      await supabase.from('bookings').delete().lt('booking_date', todayStr)
+      const cutoffDateStr = get7DaysAgoBDDate()
+      await supabase.from('bookings').delete().lt('booking_date', cutoffDateStr)
 
       const { data: allData, error } = await supabase
         .from('bookings')
@@ -288,14 +340,14 @@ export default function AdminPanel() {
 
       if (allData) {
         const oldIds = allData
-          .filter(app => app.booking_date && app.booking_date < todayStr)
+          .filter(app => app.booking_date && app.booking_date < cutoffDateStr)
           .map(app => app.id)
 
         if (oldIds.length > 0) {
           await supabase.from('bookings').delete().in('id', oldIds)
         }
 
-        const validBookings = allData.filter(app => !app.booking_date || app.booking_date >= todayStr)
+        const validBookings = allData.filter(app => !app.booking_date || app.booking_date >= cutoffDateStr)
 
         const grouped: any = {}
         const emergencyGroupedByDate: any = {}
@@ -306,7 +358,7 @@ export default function AdminPanel() {
             if (!grouped[key]) grouped[key] = []
             grouped[key].push(app)
           } else {
-            const eKey = app.booking_date || todayStr
+            const eKey = app.booking_date || getTodayBDDate()
             if (!emergencyGroupedByDate[eKey]) emergencyGroupedByDate[eKey] = []
             emergencyGroupedByDate[eKey].push(app)
           }
@@ -393,7 +445,7 @@ export default function AdminPanel() {
     }
   }
 
-  // Mark as Admitted ফাংশন: রোগীর নাম্বারে আলাদা SMS এবং রেফারকারীর নাম্বারে আপনার দেওয়া ফরম্যাটে আলাদা SMS যাবে
+  // Admitted বাটনে ক্লিক করলে রোগীর নাম্বারে এবং রেফারেল নাম্বারে (বোল্ড নামসহ) মেসেজ যাবে
   const handleMarkAsAdmitted = async (app: any, displayEqSerial: string) => {
     if (app.status === 'Admitted' || admittingId === app.id) return
     setAdmittingId(app.id)
@@ -401,7 +453,7 @@ export default function AdminPanel() {
     try {
       const { mainPhone, refPhone } = parseAppointmentDetails(app)
       const slotCategory = (app.doctor_id || '').replace('Emergency-', '') || 'Emergency'
-      const patientNameUpper = (app.patient_name || 'Patient').trim().toUpperCase()
+      const boldPatientName = toUnicodeBold((app.patient_name || 'Patient').trim().toUpperCase())
 
       const { error } = await supabase
         .from('bookings')
@@ -410,9 +462,9 @@ export default function AdminPanel() {
 
       if (error) throw error
 
-      // ১. বুকিং দেওয়া রোগীর মেইন নাম্বারে Admitted SMS
+      // ১. রোগীর মেইন নাম্বারে Admitted SMS
       if (mainPhone && mainPhone.length === 11) {
-        const patientSms = `Dear ${app.patient_name}, your admission to Delta Health Care Jatrabari Ltd. (${slotCategory}, Serial: ${displayEqSerial}) has been completed successfully. Wishing you a speedy recovery.`
+        const patientSms = `Dear ${app.patient_name}, your admission to Delta Health Care Jatrabari Ltd. (${slotCategory}, Serial: ${displayEqSerial}) has been confirmed. Wishing you a speedy recovery.`
         try {
           await fetch('https://client.giosms.com/api/v1/send', {
             method: 'POST',
@@ -433,9 +485,9 @@ export default function AdminPanel() {
         }
       }
 
-      // ২. রেফারকারীর নাম্বারে (যদি থাকে) আলাদা Admitted SMS
+      // ২. রেফারেল নাম্বারে শুধুমাত্র Admitted করার পরেই মেসেজ যাবে (নাম স্টার ছাড়া বোল্ড ফন্টে)
       if (refPhone && refPhone.length === 11) {
-        const referrerSms = `Dear Sir, the patient *${patientNameUpper}* you referred has been admitted to Delta Health Care Jatrabari Ltd. Thank you for your valuable referral and support.`
+        const referrerSms = `Dear Sir, the patient ${boldPatientName} you referred has been admitted to Delta Health Care Jatrabari Ltd. Thank you for your valuable referral and support.`
         try {
           await fetch('https://client.giosms.com/api/v1/send', {
             method: 'POST',
@@ -636,6 +688,7 @@ export default function AdminPanel() {
     }
   }
 
+  // সাদা-কালো প্রিন্টারের জন্য পিওর কালো (#000000) টেক্সট ও বর্ডার
   const printSingleLabReport = (report: any) => {
     const printWin = window.open('', '', 'left=0,top=0,width=850,height=750')
     if (!printWin) return
@@ -646,17 +699,17 @@ export default function AdminPanel() {
           <title>Lab Report - ${report.invoice_no}</title>
           <style>
             @page { size: A4; margin: 15mm; }
-            body { font-family: 'Segoe UI', Arial, sans-serif; color: #0f172a; padding: 10px; }
-            .header { display: flex; justify-content: space-between; align-items: center; border-bottom: 3px solid #008080; padding-bottom: 12px; margin-bottom: 20px; }
-            .title-bn { font-size: 20px; font-weight: 900; color: #008080; margin: 0; }
-            .title-en { font-size: 13px; font-weight: 800; color: #e11d48; margin: 2px 0; }
-            .addr { font-size: 11px; color: #475569; margin: 0; }
-            .meta-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; background: #f8fafc; border: 1px solid #cbd5e1; border-radius: 10px; padding: 14px; font-size: 12px; margin-bottom: 20px; }
-            .meta-row { display: flex; justify-content: space-between; border-bottom: 1px dashed #e2e8f0; padding-bottom: 4px; }
-            .report-title { text-align: center; background: #008080; color: #fff; font-weight: 800; padding: 8px; border-radius: 6px; font-size: 14px; letter-spacing: 1px; margin-bottom: 20px; text-transform: uppercase; }
-            .result-box { min-height: 280px; border: 1px solid #e2e8f0; border-radius: 10px; padding: 18px; font-size: 13px; line-height: 1.7; white-space: pre-wrap; background: #fff; }
-            .footer { margin-top: 50px; display: flex; justify-content: space-between; font-size: 12px; color: #334155; padding-top: 20px; }
-            .sig-line { border-top: 1px solid #334155; width: 180px; text-align: center; padding-top: 6px; font-weight: 700; }
+            body { font-family: 'Segoe UI', Arial, sans-serif; color: #000000; padding: 10px; }
+            .header { display: flex; justify-content: space-between; align-items: center; border-bottom: 3px solid #000000; padding-bottom: 12px; margin-bottom: 20px; }
+            .title-bn { font-size: 22px; font-weight: 900; color: #000000; margin: 0; }
+            .title-en { font-size: 13px; font-weight: 800; color: #000000; margin: 2px 0; }
+            .addr { font-size: 11px; color: #000000; margin: 0; }
+            .meta-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; border: 1.5px solid #000000; border-radius: 8px; padding: 14px; font-size: 12px; margin-bottom: 20px; }
+            .meta-row { display: flex; justify-content: space-between; border-bottom: 1px dashed #000000; padding-bottom: 4px; }
+            .report-title { text-align: center; border: 2px solid #000000; color: #000000; font-weight: 900; padding: 8px; border-radius: 6px; font-size: 14px; letter-spacing: 1px; margin-bottom: 20px; text-transform: uppercase; }
+            .result-box { min-height: 280px; border: 1.5px solid #000000; border-radius: 8px; padding: 18px; font-size: 13px; line-height: 1.7; white-space: pre-wrap; color: #000000; }
+            .footer { margin-top: 50px; display: flex; justify-content: space-between; font-size: 12px; color: #000000; padding-top: 20px; }
+            .sig-line { border-top: 1.5px solid #000000; width: 180px; text-align: center; padding-top: 6px; font-weight: 700; color: #000000; }
           </style>
         </head>
         <body>
@@ -666,10 +719,10 @@ export default function AdminPanel() {
               <h2 class="title-en">DELTA HEALTH CARE JATRABARI LIMITED</h2>
               <p class="addr">169/1-B, West Dholaipar, Jatrabari, Dhaka | Hotline: 09666720320</p>
             </div>
-            <div style="text-align: right;">
-              <div style="font-size: 16px; font-weight: 900; color: #008080;">Bill No: ${report.invoice_no}</div>
-              <div style="font-size: 11px; color: #64748b;">Date: ${report.test_date}</div>
-              <div style="font-size: 11px; font-weight: 700; color: #059669;">Status: ${report.delivery_status}</div>
+            <div style="text-align: right; color: #000000;">
+              <div style="font-size: 16px; font-weight: 900;">Bill No: ${report.invoice_no}</div>
+              <div style="font-size: 11px; font-weight: 700;">Date: ${report.test_date}</div>
+              <div style="font-size: 11px; font-weight: 700;">Status: ${report.delivery_status}</div>
             </div>
           </div>
 
@@ -688,7 +741,7 @@ export default function AdminPanel() {
 
           ${report.file_url && report.file_url.startsWith('data:image') ? `
             <div style="margin-top: 15px; text-align: center;">
-              <img src="${report.file_url}" style="max-width: 100%; max-height: 360px; border-radius: 8px; border: 1px solid #cbd5e1;" />
+              <img src="${report.file_url}" style="max-width: 100%; max-height: 360px; border-radius: 8px; border: 1px solid #000;" />
             </div>
           ` : ''}
 
@@ -705,13 +758,24 @@ export default function AdminPanel() {
     setTimeout(() => { printWin.print() }, 400)
   }
 
-  const getNext7Days = () => {
+  // বিগত ৭ দিন (Past 7 Days), আজ (Today) এবং আগামী ৭ দিন (Next 7 Days) ফিল্টার অপশন
+  const getFilterDateOptions = () => {
     const list = []
-    const today = new Date()
-    for (let i = 0; i < 7; i++) {
-      const d = new Date(today)
-      d.setDate(today.getDate() + i)
-      list.push(d.toISOString().split('T')[0])
+    const now = new Date()
+    const bdToday = new Date(now.toLocaleString('en-US', { timeZone: 'Asia/Dhaka' }))
+    for (let i = -7; i <= 7; i++) {
+      const d = new Date(bdToday)
+      d.setDate(bdToday.getDate() + i)
+      const year = d.getFullYear()
+      const month = String(d.getMonth() + 1).padStart(2, '0')
+      const day = String(d.getDate()).padStart(2, '0')
+      const dateStr = `${year}-${month}-${day}`
+      let label = dateStr
+      if (i === 0) label = `${dateStr} (Today)`
+      else if (i === -1) label = `${dateStr} (Yesterday)`
+      else if (i === 1) label = `${dateStr} (Tomorrow)`
+      else if (i < 0) label = `${dateStr} (${Math.abs(i)} days ago)`
+      list.push({ value: dateStr, label })
     }
     return list
   }
@@ -956,6 +1020,8 @@ export default function AdminPanel() {
       const nextSerial = reservedBlankCount + 1 + activeListCount
       const serialNumStr = `#${nextSerial}`
       const docFee = selectedAdminDoctor.follow_up_fee || selectedAdminDoctor.fee || '600 BDT'
+      const bookedAtStr = getCurrentBDDateTimeStr()
+      const finalSymptoms = `[TIME:${bookedAtStr}] ${adminBooking.note || ''}`.trim()
 
       const { error } = await supabase.from('bookings').insert({
         patient_name: adminBooking.name,
@@ -964,7 +1030,7 @@ export default function AdminPanel() {
         booking_date: adminBooking.booking_date,
         age: adminBooking.age ? parseInt(adminBooking.age) : null,
         patient_type: 'Admin',
-        symptoms: adminBooking.note || '',
+        symptoms: finalSymptoms,
         serial_number: nextSerial,
         status: 'Confirmed'
       })
@@ -1001,12 +1067,11 @@ export default function AdminPanel() {
     }
   }
 
-  // অ্যাডমিন Quick Reserve সাবমিট: ডাবল সাবমিট লক, ক্রমানুসারে EQ#1, EQ#2 সিরিয়াল এবং রোগী ও রেফারকারীর আলাদা SMS
+  // Quick Reserve সাবমিটে শুধুমাত্র রোগীর নাম্বারে SMS যাবে (রেফারেল নাম্বারে যাবে না, রেফারেল নাম্বারে শুধু Admitted করার পর যাবে)
   const handleAdminQuickSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
     if (isSubmittingQuick) return
-    if (quickForm.contact.length !== 11) { alert('Main contact number must be 11 digits.'); return }
-    if (quickForm.alt_contact && quickForm.alt_contact.length !== 11) { alert('Alternative number must be 11 digits.'); return }
+    if (quickForm.contact.length !== 11) { alert('Contact number must be 11 digits.'); return }
     if (quickForm.is_referred && quickForm.ref_phone && quickForm.ref_phone.length !== 11) {
       alert('Referrer phone number must be 11 digits.');
       return;
@@ -1016,7 +1081,6 @@ export default function AdminPanel() {
     const todayDate = getTodayBDDate()
 
     try {
-      // আজকের মোট ইমার্জেন্সি বুকিং গুনে সিরিয়াল EQ#1, EQ#2, EQ#3 নির্ধারণ করা
       const { data: existingEmergencies } = await supabase
         .from('bookings')
         .select('id, doctor_id, patient_type')
@@ -1024,12 +1088,9 @@ export default function AdminPanel() {
 
       const emergencyCount = (existingEmergencies || []).filter((b: any) => isEmergencyBooking(b)).length
       const nextEqSerial = emergencyCount + 1
+      const bookedAtStr = getCurrentBDDateTimeStr()
 
-      const combinedPhone = quickForm.alt_contact
-        ? `${quickForm.contact} | Alt:${quickForm.alt_contact}`
-        : quickForm.contact
-
-      const metaParts: string[] = ['[SRC:Admin]']
+      const metaParts: string[] = ['[SRC:Admin]', `[TIME:${bookedAtStr}]`]
       if (quickForm.note.trim()) {
         metaParts.push(quickForm.note.trim())
       }
@@ -1040,7 +1101,7 @@ export default function AdminPanel() {
 
       const { error } = await supabase.from('bookings').insert({
         patient_name: quickForm.name,
-        phone: combinedPhone,
+        phone: quickForm.contact,
         doctor_id: `Emergency-${quickReserveType}`,
         booking_date: todayDate,
         age: quickForm.age ? parseInt(quickForm.age) : null,
@@ -1052,10 +1113,8 @@ export default function AdminPanel() {
 
       if (error) throw error
 
-      const patientNameUpper = (quickForm.name || 'Patient').trim().toUpperCase()
-
-      // ১. রোগীর মেইন নাম্বারে বুকিং কনফার্মেশন SMS
-      const patientSmsMessage = `Dear ${quickForm.name}, your emergency slot (${quickReserveType}) booking is confirmed. Serial: EQ#${nextEqSerial}. Thank you for choosing Delta Health Care Jatrabari Ltd.`
+      // শুধুমাত্র রোগীর নাম্বারে বুকিং কনফার্মেশন SMS যাবে
+      const patientSmsMessage = `Dear ${quickForm.name}, your emergency slot (${quickReserveType}) is confirmed. Serial: EQ#${nextEqSerial}. Thank you for choosing Delta Health Care Jatrabari Ltd.`
 
       try {
         await fetch('https://client.giosms.com/api/v1/send', {
@@ -1076,29 +1135,6 @@ export default function AdminPanel() {
         console.error('Patient SMS error:', smsErr)
       }
 
-      // ২. রেফারকারীর নাম্বারে আলাদা বুকিং কনফার্মেশন SMS
-      if (quickForm.is_referred && quickForm.ref_phone.length === 11) {
-        const referrerBookingSms = `Dear Sir, the patient *${patientNameUpper}* you referred has been booked for an emergency slot (${quickReserveType}, Serial: EQ#${nextEqSerial}) at Delta Health Care Jatrabari Ltd. Thank you for your valuable referral and support.`
-        try {
-          await fetch('https://client.giosms.com/api/v1/send', {
-            method: 'POST',
-            headers: {
-              'Authorization': 'Bearer 9|4KjApQNKFOrzY5teFNuZbfOzCKP9Dn4re5aPJfKW219943ad',
-              'Content-Type': 'application/json',
-              'Accept': 'application/json'
-            },
-            body: JSON.stringify({
-              to: `88${quickForm.ref_phone}`,
-              message: referrerBookingSms,
-              sender_id: '8809666720320',
-              type: 'transactional'
-            })
-          })
-        } catch (refSmsErr) {
-          console.error('Referrer SMS error:', refSmsErr)
-        }
-      }
-
       setQuickSubmitted(true)
       await cleanupPastBookingsAndFetch()
     } catch (err: any) {
@@ -1108,13 +1144,15 @@ export default function AdminPanel() {
     }
   }
 
-  const todayDateStr = getTodayBDDate()
+  const cutoff7DaysStr = get7DaysAgoBDDate()
 
   const filteredAppointments = appointments.filter(app => {
-    if (app.booking_date && app.booking_date < todayDateStr) return false
+    if (app.booking_date && app.booking_date < cutoff7DaysStr) return false
 
     if (activeTab === 'quick-reserve-list') {
-      return isEmergencyBooking(app)
+      if (!isEmergencyBooking(app)) return false
+      const matchDate = filterDateMode !== 'all' ? app.booking_date === filterDateMode : true
+      return matchDate
     }
     if (activeTab === 'appointments') {
       if (isEmergencyBooking(app)) return false
@@ -1130,8 +1168,9 @@ export default function AdminPanel() {
     : null
   const activeReservedCountForSelectedDoc = selectedFilterDocObj ? getDoctorReservedSlots(selectedFilterDocObj) : 0
 
+  // সাদা-কালো প্রিন্টারের জন্য কালো হেডার ("ডেলটা হেলথ্ কেয়ার যাত্রাবাড়ী লিমিটেড") এবং বুকিং করার সময় (Booked At) সহ PDF প্রিন্ট
   const downloadPDFReport = () => {
-    const printWindow = window.open('', '', 'left=0,top=0,width=950,height=700')
+    const printWindow = window.open('', '', 'left=0,top=0,width=980,height=720')
     if (!printWindow) return
 
     const blankRowsHtml = (activeTab === 'appointments' && filterDoctor && activeReservedCountForSelectedDoc > 0)
@@ -1143,7 +1182,8 @@ export default function AdminPanel() {
             <td></td>
             <td>${selectedFilterDocObj?.name || ''}</td>
             <td>${filterDateMode !== 'all' ? filterDateMode : ''}</td>
-            <td>#${num}</td>
+            <td></td>
+            <td><b>#${num}</b></td>
             <td></td>
             <td></td>
           </tr>
@@ -1160,12 +1200,11 @@ export default function AdminPanel() {
         ? `#${a.computed_serial || a.serial_number}`
         : `EQ#${a.computed_emergency_serial || idx + 1}`
 
-      const { mainPhone, altPhone, cleanNote, refName, refPhone } = parseAppointmentDetails(a)
+      const { mainPhone, cleanNote, refName, refPhone, bookedAt } = parseAppointmentDetails(a)
       const sourceText = getBookingSourceLabel(a)
       const phoneHtml = `
         <div><b>${mainPhone}</b></div>
-        ${altPhone ? `<div style="font-size:10px;color:#475569;">Alt: ${altPhone}</div>` : ''}
-        ${(refName || refPhone) ? `<div style="font-size:10px;color:#008080;">Ref: ${refName} (${refPhone})</div>` : ''}
+        ${(refName || refPhone) ? `<div style="font-size:10px;color:#000000;">Ref: ${refName} (${refPhone})</div>` : ''}
       `
 
       return `
@@ -1176,6 +1215,7 @@ export default function AdminPanel() {
           <td>${a.age || '-'}</td>
           <td>${docName}</td>
           <td>${a.booking_date}</td>
+          <td style="font-size:10px;">${bookedAt || '-'}</td>
           <td><b>${displaySerial}</b></td>
           <td>${cleanNote || '-'}</td>
           <td>${sourceText}${a.status === 'Admitted' ? ' (Admitted)' : ''}</td>
@@ -1188,22 +1228,21 @@ export default function AdminPanel() {
         <head>
           <title>Appointment Report - Delta Health Care</title>
           <style>
-            body { font-family: Arial, sans-serif; padding: 20px; color: #111; }
-            .header { text-align: center; border-bottom: 2px solid #008080; padding-bottom: 10px; margin-bottom: 20px; }
-            .header h2 { color: #008080; margin: 0; font-size: 22px; }
-            .header p { font-size: 12px; color: #555; margin: 4px 0; }
-            table { width: 100%; border-collapse: collapse; margin-top: 15px; font-size: 12px; }
-            th, td { border: 1px solid #cbd5e1; padding: 8px 10px; text-align: left; }
-            th { background: #008080; color: #fff; }
-            tr:nth-child(even) { background: #f8fafc; }
-            .footer { margin-top: 30px; text-align: right; font-size: 11px; color: #64748b; }
+            body { font-family: Arial, sans-serif; padding: 20px; color: #000000; background: #ffffff; }
+            .header { text-align: center; border-bottom: 2.5px solid #000000; padding-bottom: 10px; margin-bottom: 20px; }
+            .header h2 { color: #000000; margin: 0; font-size: 24px; font-weight: 900; }
+            .header p { font-size: 12px; color: #000000; margin: 4px 0; font-weight: 600; }
+            table { width: 100%; border-collapse: collapse; margin-top: 15px; font-size: 11.5px; color: #000000; }
+            th, td { border: 1.5px solid #000000; padding: 7px 8px; text-align: left; color: #000000; }
+            th { background: #f1f5f9; color: #000000; font-weight: 900; }
+            .footer { margin-top: 35px; text-align: right; font-size: 12px; color: #000000; font-weight: 700; }
           </style>
         </head>
         <body>
           <div class="header">
             <h2>ডেলটা হেলথ্ কেয়ার যাত্রাবাড়ী লিমিটেড</h2>
             <p>Official ${activeTab === 'quick-reserve-list' ? 'Quick Reserve' : 'Appointments'} List & Summary Report</p>
-            <p>Generated Date: ${new Date().toLocaleDateString()}</p>
+            <p>Printed On: ${getCurrentBDDateTimeStr()}</p>
           </div>
           <table>
             <thead>
@@ -1213,7 +1252,8 @@ export default function AdminPanel() {
                 <th>Phone & Referral</th>
                 <th>Age</th>
                 <th>Doctor / Category</th>
-                <th>Date</th>
+                <th>Appt. Date</th>
+                <th>Booked At (Date & Time)</th>
                 <th>Serial</th>
                 <th>Note</th>
                 <th>Status / Source</th>
@@ -1221,7 +1261,7 @@ export default function AdminPanel() {
             </thead>
             <tbody>
               ${blankRowsHtml}
-              ${rowsHtml || '<tr><td colspan="9" style="text-align:center;">No records found.</td></tr>'}
+              ${rowsHtml || '<tr><td colspan="10" style="text-align:center;">No records found.</td></tr>'}
             </tbody>
           </table>
           <div class="footer">
@@ -1347,7 +1387,7 @@ export default function AdminPanel() {
           <button 
             onClick={() => {
               setQuickSubmitted(false);
-              setQuickForm({ name: '', age: '', contact: '', alt_contact: '', note: '', is_referred: false, ref_name: '', ref_phone: '' });
+              setQuickForm({ name: '', age: '', contact: '', note: '', is_referred: false, ref_name: '', ref_phone: '' });
               setActiveTab('quick-reserve');
             }}
             className={`flex items-center gap-2 px-3.5 py-2.5 sm:px-4 sm:py-3 rounded-xl font-bold text-xs sm:text-sm transition whitespace-nowrap flex-shrink-0 ${activeTab === 'quick-reserve' ? 'bg-[#008080] text-white shadow-sm' : 'text-slate-600 hover:bg-slate-50 bg-slate-50/60 lg:bg-transparent'}`}
@@ -1534,8 +1574,8 @@ export default function AdminPanel() {
                     {activeTab === 'appointments'
                       ? (filterDoctor
                           ? `${selectedFilterDocObj?.name}: First ${activeReservedCountForSelectedDoc} serial(s) reserved blank; patient bookings start from #${activeReservedCountForSelectedDoc + 1}`
-                          : 'Showing all doctors with their actual patient serial numbers')
-                      : 'Review emergency quick reservations (EQ#1, EQ#2...), referral details & mark patients as Admitted'}
+                          : 'Showing all doctors with their actual patient serial numbers (Auto-deletes after 7 days)')
+                      : 'Review emergency quick reservations (Auto-deletes after 7 days)'}
                   </p>
                 </div>
                 <div className="flex items-center gap-2 w-full sm:w-auto">
@@ -1556,8 +1596,8 @@ export default function AdminPanel() {
                 </div>
               </div>
 
-              {activeTab === 'appointments' && (
-                <div className="bg-slate-50 p-3.5 rounded-xl border border-slate-200 mb-5 grid grid-cols-1 sm:grid-cols-3 gap-3 items-end">
+              <div className="bg-slate-50 p-3.5 rounded-xl border border-slate-200 mb-5 grid grid-cols-1 sm:grid-cols-3 gap-3 items-end">
+                {activeTab === 'appointments' && (
                   <div>
                     <label className="text-[11px] font-bold text-slate-600 block mb-1">Filter by Doctor</label>
                     <select 
@@ -1573,36 +1613,36 @@ export default function AdminPanel() {
                       ))}
                     </select>
                   </div>
+                )}
 
-                  <div>
-                    <label className="text-[11px] font-bold text-slate-600 block mb-1">Filter by Date (7 Days)</label>
-                    <select 
-                      value={filterDateMode}
-                      onChange={e => setFilterDateMode(e.target.value)}
-                      className="w-full border rounded-lg px-3 py-2 text-xs bg-white font-medium"
-                    >
-                      <option value="all">All Dates</option>
-                      {getNext7Days().map(dateStr => (
-                        <option key={dateStr} value={dateStr}>{dateStr}</option>
-                      ))}
-                    </select>
-                  </div>
-
-                  {(filterDoctor || filterDateMode !== 'all') && (
-                    <div>
-                      <button 
-                        onClick={() => { setFilterDoctor(''); setFilterDateMode('all') }}
-                        className="w-full bg-slate-200 hover:bg-slate-300 text-slate-700 px-3 py-2 rounded-lg text-xs font-bold transition"
-                      >
-                        Clear Filters
-                      </button>
-                    </div>
-                  )}
+                <div>
+                  <label className="text-[11px] font-bold text-slate-600 block mb-1">Filter by Date (Past 7 Days & Next 7 Days)</label>
+                  <select 
+                    value={filterDateMode}
+                    onChange={e => setFilterDateMode(e.target.value)}
+                    className="w-full border rounded-lg px-3 py-2 text-xs bg-white font-medium"
+                  >
+                    <option value="all">All Dates (Last 7 Days to Next 7 Days)</option>
+                    {getFilterDateOptions().map(item => (
+                      <option key={item.value} value={item.value}>{item.label}</option>
+                    ))}
+                  </select>
                 </div>
-              )}
+
+                {(filterDoctor || filterDateMode !== 'all') && (
+                  <div>
+                    <button 
+                      onClick={() => { setFilterDoctor(''); setFilterDateMode('all') }}
+                      className="w-full bg-slate-200 hover:bg-slate-300 text-slate-700 px-3 py-2 rounded-lg text-xs font-bold transition"
+                    >
+                      Clear Filters
+                    </button>
+                  </div>
+                )}
+              </div>
 
               <div className="overflow-x-auto -mx-3.5 sm:mx-0 px-3.5 sm:px-0">
-                <table className="w-full text-left border-collapse min-w-[740px]">
+                <table className="w-full text-left border-collapse min-w-[820px]">
                   <thead>
                     <tr className="border-b text-xs font-bold text-slate-600 bg-slate-50">
                       <th className="p-2.5 sm:p-3">Serial</th>
@@ -1610,7 +1650,8 @@ export default function AdminPanel() {
                       <th className="p-2.5 sm:p-3">Age</th>
                       <th className="p-2.5 sm:p-3">Phone & Referral</th>
                       <th className="p-2.5 sm:p-3">Doctor / Category</th>
-                      <th className="p-2.5 sm:p-3">Date</th>
+                      <th className="p-2.5 sm:p-3">Appt. Date</th>
+                      <th className="p-2.5 sm:p-3">Booked At (Date & Time)</th>
                       <th className="p-2.5 sm:p-3">Note</th>
                       <th className="p-2.5 sm:p-3">Status / Source</th>
                       <th className="p-2.5 sm:p-3 text-right">Action</th>
@@ -1627,13 +1668,14 @@ export default function AdminPanel() {
                         <td className="p-2.5 sm:p-3">-</td>
                         <td className="p-2.5 sm:p-3">-</td>
                         <td className="p-2.5 sm:p-3">-</td>
+                        <td className="p-2.5 sm:p-3">-</td>
                         <td className="p-2.5 sm:p-3 text-right">-</td>
                       </tr>
                     ))}
 
                     {filteredAppointments.length === 0 ? (
                       <tr>
-                        <td colSpan={9} className="text-sm text-slate-500 text-center py-6">
+                        <td colSpan={10} className="text-sm text-slate-500 text-center py-6">
                           No patient bookings found.
                         </td>
                       </tr>
@@ -1645,7 +1687,7 @@ export default function AdminPanel() {
                           ? `#${app.computed_serial || app.serial_number}`
                           : `EQ#${app.computed_emergency_serial || idx + 1}`
 
-                        const { mainPhone, altPhone, cleanNote, refName, refPhone } = parseAppointmentDetails(app)
+                        const { mainPhone, cleanNote, refName, refPhone, bookedAt } = parseAppointmentDetails(app)
                         const isAdmitted = app.status === 'Admitted'
 
                         return (
@@ -1655,11 +1697,6 @@ export default function AdminPanel() {
                             <td className="p-2.5 sm:p-3 text-slate-600">{app.age || '-'}</td>
                             <td className="p-2.5 sm:p-3">
                               <div className="font-mono font-bold text-slate-900 text-xs">{mainPhone}</div>
-                              {altPhone && (
-                                <div className="font-mono text-[11px] text-slate-500 mt-0.5">
-                                  Alt: {altPhone}
-                                </div>
-                              )}
                               {(refName || refPhone) && (
                                 <div className="mt-1 bg-teal-50 border border-teal-200 rounded px-2 py-0.5 text-[10px] text-[#008080] font-bold">
                                   Ref: {refName || 'Yes'} {refPhone ? `(${refPhone})` : ''}
@@ -1668,7 +1705,10 @@ export default function AdminPanel() {
                             </td>
                             <td className="p-2.5 sm:p-3 text-slate-800 font-medium">{matchedDoc ? matchedDoc.name : app.doctor_id}</td>
                             <td className="p-2.5 sm:p-3 text-slate-600 whitespace-nowrap">{app.booking_date}</td>
-                            <td className="p-2.5 sm:p-3 text-slate-600 text-xs italic max-w-[180px]">
+                            <td className="p-2.5 sm:p-3 text-slate-600 text-[11px] font-mono whitespace-nowrap">
+                              {bookedAt}
+                            </td>
+                            <td className="p-2.5 sm:p-3 text-slate-600 text-xs italic max-w-[160px]">
                               {cleanNote || 'None'}
                             </td>
                             <td className="p-2.5 sm:p-3">
@@ -1872,6 +1912,7 @@ export default function AdminPanel() {
             </div>
           )}
 
+          {/* Quick Reserve Form (Alternative Number Removed) */}
           {activeTab === 'quick-reserve' && (
             <div className="max-w-xl mx-auto">
               <h3 className="text-lg sm:text-xl font-black text-slate-900 mb-4">Quick Reserve (Emergency Slots)</h3>
@@ -1882,7 +1923,7 @@ export default function AdminPanel() {
                   <button
                     onClick={() => {
                       setQuickSubmitted(false);
-                      setQuickForm({ name: '', age: '', contact: '', alt_contact: '', note: '', is_referred: false, ref_name: '', ref_phone: '' });
+                      setQuickForm({ name: '', age: '', contact: '', note: '', is_referred: false, ref_name: '', ref_phone: '' });
                     }}
                     className="mt-4 bg-[#008080] text-white px-6 py-2 rounded-xl text-sm font-semibold"
                   >
@@ -1929,30 +1970,17 @@ export default function AdminPanel() {
                       </div>
                     </div>
 
-                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                      <div>
-                        <label className="text-xs font-bold text-slate-700">Main Contact Number <span className="text-rose-500">*</span></label>
-                        <input 
-                          type="tel" 
-                          required 
-                          maxLength={11}
-                          value={quickForm.contact} 
-                          onChange={e => setQuickForm({...quickForm, contact: e.target.value.replace(/\D/g, '')})}
-                          placeholder="11 Digit Mobile Number" 
-                          className="w-full border rounded-xl px-3 py-2.5 text-sm font-mono outline-none focus:ring-2 focus:ring-teal-500 mt-1" 
-                        />
-                      </div>
-                      <div>
-                        <label className="text-xs font-bold text-slate-700">Alternative Number (Optional)</label>
-                        <input 
-                          type="tel" 
-                          maxLength={11}
-                          value={quickForm.alt_contact} 
-                          onChange={e => setQuickForm({...quickForm, alt_contact: e.target.value.replace(/\D/g, '')})}
-                          placeholder="Alternative 11 Digit No" 
-                          className="w-full border rounded-xl px-3 py-2.5 text-sm font-mono outline-none focus:ring-2 focus:ring-teal-500 mt-1" 
-                        />
-                      </div>
+                    <div>
+                      <label className="text-xs font-bold text-slate-700">Contact Number <span className="text-rose-500">*</span></label>
+                      <input 
+                        type="tel" 
+                        required 
+                        maxLength={11}
+                        value={quickForm.contact} 
+                        onChange={e => setQuickForm({...quickForm, contact: e.target.value.replace(/\D/g, '')})}
+                        placeholder="11 Digit Mobile Number" 
+                        className="w-full border rounded-xl px-3 py-2.5 text-sm font-mono outline-none focus:ring-2 focus:ring-teal-500 mt-1" 
+                      />
                     </div>
 
                     <div>
