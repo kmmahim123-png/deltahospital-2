@@ -6,10 +6,12 @@ import { sharedDoctors } from '@/lib/doctors'
 
 export default function AdminPanel() {
   const [isAuthenticated, setIsAuthenticated] = useState(false)
+  const [userRole, setUserRole] = useState<'superadmin' | 'admin'>('admin')
+  const [loginRoleSelect, setLoginRoleSelect] = useState<'superadmin' | 'admin'>('superadmin')
   const [passwordInput, setPasswordInput] = useState('')
   const [showPassword, setShowPassword] = useState(false)
   
-  const [activeTab, setActiveTab] = useState<'doctors' | 'appointments' | 'edit-serial' | 'booking' | 'quick-reserve' | 'quick-reserve-list' | 'lab-reports'>('doctors')
+  const [activeTab, setActiveTab] = useState<'doctors' | 'appointments' | 'edit-serial' | 'booking' | 'quick-reserve' | 'quick-reserve-list' | 'lab-reports'>('appointments')
   const [appointments, setAppointments] = useState<any[]>([])
   const [doctors, setDoctors] = useState<any[]>(sharedDoctors)
 
@@ -21,6 +23,7 @@ export default function AdminPanel() {
   const [currentDocId, setCurrentDocId] = useState<any>(null)
   const [savingSerialDocId, setSavingSerialDocId] = useState<any>(null)
   const [admittingId, setAdmittingId] = useState<any>(null)
+  const [cancellingId, setCancellingId] = useState<any>(null)
   const [isSubmittingBooking, setIsSubmittingBooking] = useState(false)
   const [isSubmittingQuick, setIsSubmittingQuick] = useState(false)
 
@@ -101,7 +104,6 @@ export default function AdminPanel() {
     return `${year}-${month}-${day}`
   }
 
-  // ৭ দিন আগের তারিখ বের করার ফাংশন (যাতে ৭ দিন পর ডাটা ডিলিট হয়)
   const get7DaysAgoBDDate = () => {
     const now = new Date()
     const bdTime = new Date(now.toLocaleString('en-US', { timeZone: 'Asia/Dhaka' }))
@@ -112,7 +114,6 @@ export default function AdminPanel() {
     return `${year}-${month}-${day}`
   }
 
-  // বর্তমান তারিখ ও সময় সুন্দর ফরম্যাটে নেওয়ার ফাংশন (Booked At)
   const getCurrentBDDateTimeStr = () => {
     const now = new Date()
     return now.toLocaleString('en-US', {
@@ -126,7 +127,6 @@ export default function AdminPanel() {
     })
   }
 
-  // SMS-এ স্টার (*) ছাড়াই নাম বোল্ড দেখানোর জন্য Unicode Bold কনভার্টার (যেমন: PARVEZ -> 𝗣𝗔𝗥𝗩𝗘𝗭)
   const toUnicodeBold = (text: string) => {
     return text.split('').map(char => {
       const code = char.charCodeAt(0)
@@ -233,15 +233,17 @@ export default function AdminPanel() {
     delivery_status: 'Ready',
     payment_status: 'Paid',
     amount: '500 BDT',
-    report_summary: '',
     file_url: '',
     file_name: ''
   })
 
   useEffect(() => {
     const authStatus = localStorage.getItem('delta_admin_auth')
-    if (authStatus === 'true') {
+    const savedRole = localStorage.getItem('delta_admin_role') as 'superadmin' | 'admin'
+    if (authStatus === 'true' && (savedRole === 'superadmin' || savedRole === 'admin')) {
       setIsAuthenticated(true)
+      setUserRole(savedRole)
+      setActiveTab(savedRole === 'superadmin' ? 'doctors' : 'appointments')
     }
   }, [])
 
@@ -257,19 +259,35 @@ export default function AdminPanel() {
     await fetchLabReports()
   }
 
+  // Super Admin (`super123`) এবং Admin (`delta123`) লগইন সিস্টেম
   const handleLogin = (e: React.FormEvent) => {
     e.preventDefault()
-    if (passwordInput === 'delta123') {
+    if (loginRoleSelect === 'superadmin' && passwordInput === 'super123') {
       setIsAuthenticated(true)
+      setUserRole('superadmin')
+      setActiveTab('doctors')
       localStorage.setItem('delta_admin_auth', 'true')
+      localStorage.setItem('delta_admin_role', 'superadmin')
+    } else if (loginRoleSelect === 'admin' && passwordInput === 'delta123') {
+      setIsAuthenticated(true)
+      setUserRole('admin')
+      setActiveTab('appointments')
+      localStorage.setItem('delta_admin_auth', 'true')
+      localStorage.setItem('delta_admin_role', 'admin')
     } else {
-      alert('Incorrect Password!')
+      alert(
+        loginRoleSelect === 'superadmin'
+          ? 'Incorrect Super Admin Password!'
+          : 'Incorrect Admin Password!'
+      )
     }
   }
 
   const handleLogout = () => {
     setIsAuthenticated(false)
     localStorage.removeItem('delta_admin_auth')
+    localStorage.removeItem('delta_admin_role')
+    setPasswordInput('')
   }
 
   const parseDoctorDaysArray = (rawDays: any, fallbackDays?: string[]): string[] => {
@@ -323,7 +341,6 @@ export default function AdminPanel() {
     }
   }
 
-  // ৭ দিনের পুরনো ডাটা অটো-ডিলিট করা হবে এবং বিগত ৭ দিন থেকে আগামী ৭ দিনের ডাটা থাকবে
   async function cleanupPastBookingsAndFetch(currentDoctorsList?: any[]) {
     try {
       const activeDocs = currentDoctorsList || doctors
@@ -393,6 +410,7 @@ export default function AdminPanel() {
   }
 
   const handleUpdateDoctorReservedSlots = async (doc: any, newReservedCount: number) => {
+    if (userRole !== 'superadmin') return
     setSavingSerialDocId(doc.id)
     try {
       let currentSchedule: any = doc.schedule
@@ -428,6 +446,7 @@ export default function AdminPanel() {
   }
 
   const handleToggleDoctorStatus = async (doc: any) => {
+    if (userRole !== 'superadmin') return
     const nextStatus = doc.status === 'Absent' ? 'Present' : 'Absent'
     try {
       const { error } = await supabase
@@ -445,12 +464,24 @@ export default function AdminPanel() {
     }
   }
 
-  // Admitted বাটনে ক্লিক করলে রোগীর নাম্বারে এবং রেফারেল নাম্বারে (বোল্ড নামসহ) মেসেজ যাবে
   const handleMarkAsAdmitted = async (app: any, displayEqSerial: string) => {
-    if (app.status === 'Admitted' || admittingId === app.id) return
+    if (app.status === 'Admitted' || admittingId !== null) return
     setAdmittingId(app.id)
 
     try {
+      const { data: currentRecord } = await supabase
+        .from('bookings')
+        .select('status')
+        .eq('id', app.id)
+        .single()
+
+      if (currentRecord?.status === 'Admitted') {
+        setAppointments(prev =>
+          prev.map(item => (item.id === app.id ? { ...item, status: 'Admitted' } : item))
+        )
+        return
+      }
+
       const { mainPhone, refPhone } = parseAppointmentDetails(app)
       const slotCategory = (app.doctor_id || '').replace('Emergency-', '') || 'Emergency'
       const boldPatientName = toUnicodeBold((app.patient_name || 'Patient').trim().toUpperCase())
@@ -462,7 +493,10 @@ export default function AdminPanel() {
 
       if (error) throw error
 
-      // ১. রোগীর মেইন নাম্বারে Admitted SMS
+      setAppointments(prev =>
+        prev.map(item => (item.id === app.id ? { ...item, status: 'Admitted' } : item))
+      )
+
       if (mainPhone && mainPhone.length === 11) {
         const patientSms = `Dear ${app.patient_name}, your admission to Delta Health Care Jatrabari Ltd. (${slotCategory}, Serial: ${displayEqSerial}) has been confirmed. Wishing you a speedy recovery.`
         try {
@@ -485,7 +519,6 @@ export default function AdminPanel() {
         }
       }
 
-      // ২. রেফারেল নাম্বারে শুধুমাত্র Admitted করার পরেই মেসেজ যাবে (নাম স্টার ছাড়া বোল্ড ফন্টে)
       if (refPhone && refPhone.length === 11) {
         const referrerSms = `Dear Sir, the patient ${boldPatientName} you referred has been admitted to Delta Health Care Jatrabari Ltd. Thank you for your valuable referral and support.`
         try {
@@ -508,9 +541,6 @@ export default function AdminPanel() {
         }
       }
 
-      setAppointments(prev =>
-        prev.map(item => (item.id === app.id ? { ...item, status: 'Admitted' } : item))
-      )
       alert(`Patient "${app.patient_name}" marked as Admitted & SMS notification sent!`)
     } catch (err: any) {
       alert('Failed to mark as Admitted: ' + err.message)
@@ -548,7 +578,6 @@ export default function AdminPanel() {
       delivery_status: 'Ready',
       payment_status: 'Paid',
       amount: '500 BDT',
-      report_summary: 'Normal / Within Reference Range',
       file_url: '',
       file_name: ''
     })
@@ -569,7 +598,6 @@ export default function AdminPanel() {
       delivery_status: report.delivery_status || 'Ready',
       payment_status: report.payment_status || 'Paid',
       amount: report.amount || '500 BDT',
-      report_summary: report.report_summary || '',
       file_url: report.file_url || '',
       file_name: report.file_name || ''
     })
@@ -579,8 +607,8 @@ export default function AdminPanel() {
   const handleLabFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0]
     if (!file) return
-    if (file.size > 6 * 1024 * 1024) {
-      alert('File size must be under 6 MB')
+    if (file.size > 8 * 1024 * 1024) {
+      alert('File size must be under 8 MB')
       return
     }
     const reader = new FileReader()
@@ -604,6 +632,10 @@ export default function AdminPanel() {
       alert('Patient phone number must be exactly 11 digits.')
       return
     }
+    if (!labForm.file_url) {
+      alert('Please upload the report PDF or Image file.')
+      return
+    }
     setSavingLab(true)
     try {
       const payload = {
@@ -618,7 +650,7 @@ export default function AdminPanel() {
         delivery_status: labForm.delivery_status,
         payment_status: labForm.payment_status,
         amount: labForm.amount,
-        report_summary: labForm.report_summary,
+        report_summary: '',
         file_url: labForm.file_url,
         file_name: labForm.file_name
       }
@@ -653,7 +685,7 @@ export default function AdminPanel() {
         }
       }
 
-      alert(isLabEditMode ? 'Lab Report updated successfully!' : 'Lab Report created & published to website!')
+      alert(isLabEditMode ? 'Lab Report updated successfully!' : 'Lab Report uploaded & published to website!')
       setIsLabModalOpen(false)
       fetchLabReports()
     } catch (err: any) {
@@ -678,6 +710,10 @@ export default function AdminPanel() {
   }
 
   const handleDeleteLabReport = async (id: any) => {
+    if (userRole !== 'superadmin') {
+      alert('Only Super Admin can delete lab reports.')
+      return
+    }
     if (!confirm('Are you sure you want to delete this lab report permanently?')) return
     try {
       const { error } = await supabase.from('lab_reports').delete().eq('id', id)
@@ -688,77 +724,6 @@ export default function AdminPanel() {
     }
   }
 
-  // সাদা-কালো প্রিন্টারের জন্য পিওর কালো (#000000) টেক্সট ও বর্ডার
-  const printSingleLabReport = (report: any) => {
-    const printWin = window.open('', '', 'left=0,top=0,width=850,height=750')
-    if (!printWin) return
-
-    printWin.document.write(`
-      <html>
-        <head>
-          <title>Lab Report - ${report.invoice_no}</title>
-          <style>
-            @page { size: A4; margin: 15mm; }
-            body { font-family: 'Segoe UI', Arial, sans-serif; color: #000000; padding: 10px; }
-            .header { display: flex; justify-content: space-between; align-items: center; border-bottom: 3px solid #000000; padding-bottom: 12px; margin-bottom: 20px; }
-            .title-bn { font-size: 22px; font-weight: 900; color: #000000; margin: 0; }
-            .title-en { font-size: 13px; font-weight: 800; color: #000000; margin: 2px 0; }
-            .addr { font-size: 11px; color: #000000; margin: 0; }
-            .meta-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; border: 1.5px solid #000000; border-radius: 8px; padding: 14px; font-size: 12px; margin-bottom: 20px; }
-            .meta-row { display: flex; justify-content: space-between; border-bottom: 1px dashed #000000; padding-bottom: 4px; }
-            .report-title { text-align: center; border: 2px solid #000000; color: #000000; font-weight: 900; padding: 8px; border-radius: 6px; font-size: 14px; letter-spacing: 1px; margin-bottom: 20px; text-transform: uppercase; }
-            .result-box { min-height: 280px; border: 1.5px solid #000000; border-radius: 8px; padding: 18px; font-size: 13px; line-height: 1.7; white-space: pre-wrap; color: #000000; }
-            .footer { margin-top: 50px; display: flex; justify-content: space-between; font-size: 12px; color: #000000; padding-top: 20px; }
-            .sig-line { border-top: 1.5px solid #000000; width: 180px; text-align: center; padding-top: 6px; font-weight: 700; color: #000000; }
-          </style>
-        </head>
-        <body>
-          <div class="header">
-            <div>
-              <h1 class="title-bn">ডেলটা হেলথ্ কেয়ার যাত্রাবাড়ী লিমিটেড</h1>
-              <h2 class="title-en">DELTA HEALTH CARE JATRABARI LIMITED</h2>
-              <p class="addr">169/1-B, West Dholaipar, Jatrabari, Dhaka | Hotline: 09666720320</p>
-            </div>
-            <div style="text-align: right; color: #000000;">
-              <div style="font-size: 16px; font-weight: 900;">Bill No: ${report.invoice_no}</div>
-              <div style="font-size: 11px; font-weight: 700;">Date: ${report.test_date}</div>
-              <div style="font-size: 11px; font-weight: 700;">Status: ${report.delivery_status}</div>
-            </div>
-          </div>
-
-          <div class="meta-grid">
-            <div class="meta-row"><span><b>Patient Name:</b></span> <span>${report.patient_name}</span></div>
-            <div class="meta-row"><span><b>Age / Gender:</b></span> <span>${report.age || '-'} Yrs / ${report.gender || 'Male'}</span></div>
-            <div class="meta-row"><span><b>Phone Number:</b></span> <span>${report.phone}</span></div>
-            <div class="meta-row"><span><b>Referred By:</b></span> <span>${report.referred_by || 'Self'}</span></div>
-            <div class="meta-row"><span><b>Investigation:</b></span> <span><b>${report.test_name}</b></span></div>
-            <div class="meta-row"><span><b>Payment Status:</b></span> <span>${report.payment_status} (${report.amount || ''})</span></div>
-          </div>
-
-          <div class="report-title">Diagnostic Investigation Report — ${report.test_name}</div>
-
-          <div class="result-box">${report.report_summary || 'Test completed accurately. All parameters evaluated.'}</div>
-
-          ${report.file_url && report.file_url.startsWith('data:image') ? `
-            <div style="margin-top: 15px; text-align: center;">
-              <img src="${report.file_url}" style="max-width: 100%; max-height: 360px; border-radius: 8px; border: 1px solid #000;" />
-            </div>
-          ` : ''}
-
-          <div class="footer">
-            <div class="sig-line">Medical Technologist (Lab)</div>
-            <div class="sig-line">Pathologist / Consultant</div>
-            <div class="sig-line">Authorized Signature</div>
-          </div>
-        </body>
-      </html>
-    `)
-    printWin.document.close()
-    printWin.focus()
-    setTimeout(() => { printWin.print() }, 400)
-  }
-
-  // বিগত ৭ দিন (Past 7 Days), আজ (Today) এবং আগামী ৭ দিন (Next 7 Days) ফিল্টার অপশন
   const getFilterDateOptions = () => {
     const list = []
     const now = new Date()
@@ -852,6 +817,7 @@ export default function AdminPanel() {
 
   const handleSaveDoctor = async (e: React.FormEvent) => {
     e.preventDefault()
+    if (userRole !== 'superadmin') return
     try {
       const activeDays = daysOfWeek.filter(day => docForm.schedule[day]?.active)
       const firstDay = activeDays[0]
@@ -925,6 +891,7 @@ export default function AdminPanel() {
   }
 
   const handleEditClick = (doc: any) => {
+    if (userRole !== 'superadmin') return
     setIsEditMode(true)
     setCurrentDocId(doc.id)
 
@@ -974,6 +941,7 @@ export default function AdminPanel() {
 
   const handleDeleteSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
+    if (userRole !== 'superadmin') return
     if (deleteNameInput !== deleteModalDoc.name || deleteConfirmWord !== 'delete') {
       alert('Please type the exact doctor name and the word "delete" to confirm.')
       return
@@ -990,14 +958,65 @@ export default function AdminPanel() {
     }
   }
 
-  const handleDeleteAppointment = async (id: string) => {
-    if (!confirm('Are you sure you want to delete this appointment?')) return
+  // শুধুমাত্র Super Admin ডিলিট/ক্যান্সেল করতে পারবে এবং ডক্টর অ্যাপয়েন্টমেন্ট ক্যান্সেল করলে রোগীর নাম্বারে ক্যান্সেল SMS যাবে
+  const handleDeleteAppointment = async (app: any) => {
+    if (userRole !== 'superadmin') {
+      alert('Only Super Admin is allowed to cancel or delete bookings.')
+      return
+    }
+    const isEmergency = isEmergencyBooking(app)
+    const confirmText = isEmergency
+      ? `Are you sure you want to delete this Quick Reservation for "${app.patient_name}"?`
+      : `Are you sure you want to cancel & delete "${app.patient_name}"'s doctor appointment? A cancellation SMS will be sent to the patient.`
+
+    if (!confirm(confirmText)) return
+
+    setCancellingId(app.id)
     try {
-      const { error } = await supabase.from('bookings').delete().eq('id', id)
+      const matchedDoc = doctors.find(
+        d => d.id?.toString() === app.doctor_id?.toString() || d.doctor_no?.toString() === app.doctor_id?.toString()
+      )
+      const rawDocName = matchedDoc ? matchedDoc.name : (app.doctor_id || 'Doctor')
+      const formattedDocName = /^dr\.?\s/i.test(rawDocName.trim()) || /^prof\.?\s/i.test(rawDocName.trim())
+        ? rawDocName.trim()
+        : `Dr. ${rawDocName.trim()}`
+
+      const { mainPhone } = parseAppointmentDetails(app)
+
+      const { error } = await supabase.from('bookings').delete().eq('id', app.id)
       if (error) throw error
+
+      // ডক্টর অ্যাপয়েন্টমেন্ট ক্যান্সেল করা হলে রোগীর নাম্বারে আপনার দেওয়া মেসেজ পাঠানো হচ্ছে
+      if (!isEmergency && mainPhone && mainPhone.length === 11) {
+        const cancelSms = `Dear ${app.patient_name}, your appointment with ${formattedDocName} on ${app.booking_date} has been cancelled. Sorry for the inconvenience. Delta Health Care Jatrabari Ltd. For query please call: 09666720320`
+        try {
+          await fetch('https://client.giosms.com/api/v1/send', {
+            method: 'POST',
+            headers: {
+              'Authorization': 'Bearer 9|4KjApQNKFOrzY5teFNuZbfOzCKP9Dn4re5aPJfKW219943ad',
+              'Content-Type': 'application/json',
+              'Accept': 'application/json'
+            },
+            body: JSON.stringify({
+              to: `88${mainPhone}`,
+              message: cancelSms,
+              sender_id: '8809666720320',
+              type: 'transactional'
+            })
+          })
+        } catch (smsErr) {
+          console.error('Cancel SMS error:', smsErr)
+        }
+      }
+
       await cleanupPastBookingsAndFetch()
+      if (!isEmergency) {
+        alert(`Appointment for "${app.patient_name}" cancelled & SMS sent to ${mainPhone}.`)
+      }
     } catch (err: any) {
-      alert('Delete failed: ' + err.message)
+      alert('Cancel/Delete failed: ' + err.message)
+    } finally {
+      setCancellingId(null)
     }
   }
 
@@ -1067,7 +1086,6 @@ export default function AdminPanel() {
     }
   }
 
-  // Quick Reserve সাবমিটে শুধুমাত্র রোগীর নাম্বারে SMS যাবে (রেফারেল নাম্বারে যাবে না, রেফারেল নাম্বারে শুধু Admitted করার পর যাবে)
   const handleAdminQuickSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
     if (isSubmittingQuick) return
@@ -1113,7 +1131,6 @@ export default function AdminPanel() {
 
       if (error) throw error
 
-      // শুধুমাত্র রোগীর নাম্বারে বুকিং কনফার্মেশন SMS যাবে
       const patientSmsMessage = `Dear ${quickForm.name}, your emergency slot (${quickReserveType}) is confirmed. Serial: EQ#${nextEqSerial}. Thank you for choosing Delta Health Care Jatrabari Ltd.`
 
       try {
@@ -1168,7 +1185,6 @@ export default function AdminPanel() {
     : null
   const activeReservedCountForSelectedDoc = selectedFilterDocObj ? getDoctorReservedSlots(selectedFilterDocObj) : 0
 
-  // সাদা-কালো প্রিন্টারের জন্য কালো হেডার ("ডেলটা হেলথ্ কেয়ার যাত্রাবাড়ী লিমিটেড") এবং বুকিং করার সময় (Booked At) সহ PDF প্রিন্ট
   const downloadPDFReport = () => {
     const printWindow = window.open('', '', 'left=0,top=0,width=980,height=720')
     if (!printWindow) return
@@ -1265,7 +1281,7 @@ export default function AdminPanel() {
             </tbody>
           </table>
           <div class="footer">
-            <p>Authorized Admin Signature ___________________</p>
+            <p>Authorized Signature ___________________</p>
           </div>
         </body>
       </html>
@@ -1290,18 +1306,47 @@ export default function AdminPanel() {
     return (
       <div className="min-h-screen bg-slate-100 flex items-center justify-center p-4">
         <div className="bg-white p-6 sm:p-8 rounded-2xl shadow-xl max-w-md w-full border border-slate-200">
-          <div className="flex items-center gap-3 mb-6">
+          <div className="flex items-center gap-3 mb-5">
             <div className="w-10 h-10 bg-teal-50 rounded-xl p-1 flex items-center justify-center border">
               <img src="/logo.png" alt="Logo" className="w-full h-full object-contain" />
             </div>
             <div>
               <h2 className="text-xs font-bold text-[#008080]">ডেলটা হেলথ্ কেয়ার যাত্রাবাড়ী লিমিটেড</h2>
-              <h1 className="text-sm font-black text-slate-900">Admin Authentication</h1>
+              <h1 className="text-sm font-black text-slate-900">Portal Authentication</h1>
             </div>
           </div>
+
+          {/* Super Admin vs Admin সিলেকশন ট্যাব */}
+          <div className="grid grid-cols-2 gap-2 p-1 bg-slate-100 rounded-xl mb-5 border border-slate-200">
+            <button
+              type="button"
+              onClick={() => setLoginRoleSelect('superadmin')}
+              className={`py-2 rounded-lg text-xs font-extrabold transition cursor-pointer ${
+                loginRoleSelect === 'superadmin'
+                  ? 'bg-[#008080] text-white shadow-xs'
+                  : 'text-slate-600 hover:text-slate-900'
+              }`}
+            >
+              👑 Super Admin
+            </button>
+            <button
+              type="button"
+              onClick={() => setLoginRoleSelect('admin')}
+              className={`py-2 rounded-lg text-xs font-extrabold transition cursor-pointer ${
+                loginRoleSelect === 'admin'
+                  ? 'bg-[#008080] text-white shadow-xs'
+                  : 'text-slate-600 hover:text-slate-900'
+              }`}
+            >
+              🛡️ Admin (Staff)
+            </button>
+          </div>
+
           <form onSubmit={handleLogin} className="space-y-4" autoComplete="off">
             <div>
-              <label className="text-xs font-bold text-slate-700">Enter Admin Password</label>
+              <label className="text-xs font-bold text-slate-700">
+                Enter {loginRoleSelect === 'superadmin' ? 'Super Admin' : 'Admin'} Password
+              </label>
               <div className="relative mt-1">
                 <input 
                   type={showPassword ? "text" : "password"} 
@@ -1310,7 +1355,7 @@ export default function AdminPanel() {
                   autoComplete="off"
                   name="random_pwd_field_delta"
                   onChange={e => setPasswordInput(e.target.value)}
-                  placeholder="Enter password"
+                  placeholder={loginRoleSelect === 'superadmin' ? 'Enter Super Admin password' : 'Enter Admin password'}
                   className="w-full border rounded-xl px-3 py-2.5 text-sm outline-none focus:ring-2 focus:ring-[#008080] pr-10"
                 />
                 <button
@@ -1323,7 +1368,7 @@ export default function AdminPanel() {
               </div>
             </div>
             <button type="submit" className="w-full bg-[#008080] hover:bg-[#006666] text-white py-2.5 rounded-xl font-bold text-sm transition shadow-md">
-              Login to Admin Panel
+              Login as {loginRoleSelect === 'superadmin' ? 'Super Admin' : 'Admin'}
             </button>
             <div className="text-center mt-4">
               <a href="/" className="text-xs font-bold text-slate-500 hover:underline">← Back to Website</a>
@@ -1336,7 +1381,7 @@ export default function AdminPanel() {
 
   return (
     <div className="min-h-screen bg-slate-100 flex flex-col font-sans text-slate-900 w-full overflow-x-hidden">
-      {/* Admin Header */}
+      {/* Header */}
       <header className="bg-white border-b border-slate-200 py-3 px-3 sm:px-10 flex flex-wrap justify-between items-center gap-2 shadow-xs">
         <div className="flex items-center gap-2.5">
           <div className="w-9 h-9 sm:w-10 sm:h-10 flex items-center justify-center bg-white rounded-xl p-1 border flex-shrink-0">
@@ -1344,7 +1389,16 @@ export default function AdminPanel() {
           </div>
           <div>
             <h2 className="text-[11px] sm:text-xs font-bold text-[#008080] leading-tight">ডেলটা হেলথ্ কেয়ার যাত্রাবাড়ী লিমিটেড</h2>
-            <h1 className="font-black text-xs sm:text-sm text-slate-900 leading-tight">JATRABARI LTD. (Admin)</h1>
+            <div className="flex items-center gap-2">
+              <h1 className="font-black text-xs sm:text-sm text-slate-900 leading-tight">JATRABARI LTD.</h1>
+              <span className={`px-2 py-0.5 rounded-full text-[10px] font-extrabold uppercase ${
+                userRole === 'superadmin'
+                  ? 'bg-amber-100 text-amber-800 border border-amber-300'
+                  : 'bg-teal-50 text-[#008080] border border-teal-200'
+              }`}>
+                {userRole === 'superadmin' ? '👑 Super Admin' : '🛡️ Admin'}
+              </span>
+            </div>
           </div>
         </div>
         <div className="flex items-center gap-2">
@@ -1360,30 +1414,43 @@ export default function AdminPanel() {
       {/* Main Content */}
       <div className="flex flex-col lg:flex-row flex-1 max-w-7xl w-full mx-auto p-3 sm:p-6 gap-4 sm:gap-6">
         <aside className="w-full lg:w-64 bg-white border border-slate-200 rounded-2xl p-2 sm:p-4 h-fit shadow-xs flex lg:flex-col gap-1.5 sm:gap-2 overflow-x-auto scrollbar-hide">
-          <button 
-            onClick={() => setActiveTab('doctors')}
-            className={`flex items-center gap-2 px-3.5 py-2.5 sm:px-4 sm:py-3 rounded-xl font-bold text-xs sm:text-sm transition whitespace-nowrap flex-shrink-0 ${activeTab === 'doctors' ? 'bg-[#008080] text-white shadow-sm' : 'text-slate-600 hover:bg-slate-50 bg-slate-50/60 lg:bg-transparent'}`}
-          >
-            <span>👨‍⚕️</span> Doctor List ({doctors.length})
-          </button>
+          {/* শুধুমাত্র Super Admin ডাক্তার লিস্ট দেখতে পারবে */}
+          {userRole === 'superadmin' && (
+            <button 
+              onClick={() => setActiveTab('doctors')}
+              className={`flex items-center gap-2 px-3.5 py-2.5 sm:px-4 sm:py-3 rounded-xl font-bold text-xs sm:text-sm transition whitespace-nowrap flex-shrink-0 ${activeTab === 'doctors' ? 'bg-[#008080] text-white shadow-sm' : 'text-slate-600 hover:bg-slate-50 bg-slate-50/60 lg:bg-transparent'}`}
+            >
+              <span>👨‍⚕️</span> Doctor List ({doctors.length})
+            </button>
+          )}
+
+          {/* ১. Appointments (Super Admin & Admin উভয়ের জন্য) */}
           <button 
             onClick={() => setActiveTab('appointments')}
             className={`flex items-center gap-2 px-3.5 py-2.5 sm:px-4 sm:py-3 rounded-xl font-bold text-xs sm:text-sm transition whitespace-nowrap flex-shrink-0 ${activeTab === 'appointments' ? 'bg-[#008080] text-white shadow-sm' : 'text-slate-600 hover:bg-slate-50 bg-slate-50/60 lg:bg-transparent'}`}
           >
             <span>📋</span> Appointments
           </button>
-          <button 
-            onClick={() => setActiveTab('edit-serial')}
-            className={`flex items-center gap-2 px-3.5 py-2.5 sm:px-4 sm:py-3 rounded-xl font-bold text-xs sm:text-sm transition whitespace-nowrap flex-shrink-0 ${activeTab === 'edit-serial' ? 'bg-[#008080] text-white shadow-sm' : 'text-slate-600 hover:bg-slate-50 bg-slate-50/60 lg:bg-transparent'}`}
-          >
-            <span>⚙️</span> Edit Appointment Serial
-          </button>
+
+          {/* শুধুমাত্র Super Admin সিরিয়াল গ্যাপ এডিট করতে পারবে */}
+          {userRole === 'superadmin' && (
+            <button 
+              onClick={() => setActiveTab('edit-serial')}
+              className={`flex items-center gap-2 px-3.5 py-2.5 sm:px-4 sm:py-3 rounded-xl font-bold text-xs sm:text-sm transition whitespace-nowrap flex-shrink-0 ${activeTab === 'edit-serial' ? 'bg-[#008080] text-white shadow-sm' : 'text-slate-600 hover:bg-slate-50 bg-slate-50/60 lg:bg-transparent'}`}
+            >
+              <span>⚙️</span> Edit Appointment Serial
+            </button>
+          )}
+
+          {/* ২. Booking Appointment (Super Admin & Admin উভয়ের জন্য) */}
           <button 
             onClick={() => setActiveTab('booking')}
             className={`flex items-center gap-2 px-3.5 py-2.5 sm:px-4 sm:py-3 rounded-xl font-bold text-xs sm:text-sm transition whitespace-nowrap flex-shrink-0 ${activeTab === 'booking' ? 'bg-[#008080] text-white shadow-sm' : 'text-slate-600 hover:bg-slate-50 bg-slate-50/60 lg:bg-transparent'}`}
           >
             <span>➕</span> Booking Appointment
           </button>
+
+          {/* ৩. Quick Reserve Form (Super Admin & Admin উভয়ের জন্য) */}
           <button 
             onClick={() => {
               setQuickSubmitted(false);
@@ -1394,23 +1461,29 @@ export default function AdminPanel() {
           >
             <span>⚡</span> Quick Reserve Form
           </button>
+
+          {/* ৪. Quick Reserve List (Super Admin & Admin উভয়ের জন্য) */}
           <button 
             onClick={() => setActiveTab('quick-reserve-list')}
             className={`flex items-center gap-2 px-3.5 py-2.5 sm:px-4 sm:py-3 rounded-xl font-bold text-xs sm:text-sm transition whitespace-nowrap flex-shrink-0 ${activeTab === 'quick-reserve-list' ? 'bg-[#008080] text-white shadow-sm' : 'text-slate-600 hover:bg-slate-50 bg-slate-50/60 lg:bg-transparent'}`}
           >
             <span>🚨</span> Quick Reserve List
           </button>
-          <button 
-            onClick={() => setActiveTab('lab-reports')}
-            className={`flex items-center gap-2 px-3.5 py-2.5 sm:px-4 sm:py-3 rounded-xl font-bold text-xs sm:text-sm transition whitespace-nowrap flex-shrink-0 ${activeTab === 'lab-reports' ? 'bg-[#008080] text-white shadow-sm' : 'text-slate-600 hover:bg-slate-50 bg-slate-50/60 lg:bg-transparent'}`}
-          >
-            <span>🧪</span> Lab & Reports ({labReports.length})
-          </button>
+
+          {/* শুধুমাত্র Super Admin Lab & Reports দেখতে পারবে */}
+          {userRole === 'superadmin' && (
+            <button 
+              onClick={() => setActiveTab('lab-reports')}
+              className={`flex items-center gap-2 px-3.5 py-2.5 sm:px-4 sm:py-3 rounded-xl font-bold text-xs sm:text-sm transition whitespace-nowrap flex-shrink-0 ${activeTab === 'lab-reports' ? 'bg-[#008080] text-white shadow-sm' : 'text-slate-600 hover:bg-slate-50 bg-slate-50/60 lg:bg-transparent'}`}
+            >
+              <span>🧪</span> Lab & Reports ({labReports.length})
+            </button>
+          )}
         </aside>
 
         <main className="flex-1 bg-white border border-slate-200 rounded-2xl p-3.5 sm:p-6 shadow-xs w-full overflow-hidden">
           
-          {activeTab === 'doctors' && (
+          {activeTab === 'doctors' && userRole === 'superadmin' && (
             <div>
               <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center mb-5 gap-3">
                 <div>
@@ -1502,7 +1575,7 @@ export default function AdminPanel() {
             </div>
           )}
 
-          {activeTab === 'edit-serial' && (
+          {activeTab === 'edit-serial' && userRole === 'superadmin' && (
             <div>
               <div className="mb-5">
                 <h2 className="text-lg sm:text-xl font-black text-slate-900">Edit Appointment Serial (Doctor-wise)</h2>
@@ -1579,7 +1652,7 @@ export default function AdminPanel() {
                   </p>
                 </div>
                 <div className="flex items-center gap-2 w-full sm:w-auto">
-                  {activeTab === 'appointments' && (
+                  {activeTab === 'appointments' && userRole === 'superadmin' && (
                     <button
                       onClick={() => setActiveTab('edit-serial')}
                       className="bg-teal-50 hover:bg-teal-100 text-[#008080] border border-teal-200 px-3.5 py-2 rounded-xl font-bold text-xs sm:text-sm transition flex items-center gap-1.5 flex-1 sm:flex-initial justify-center"
@@ -1747,12 +1820,25 @@ export default function AdminPanel() {
                                       : '🏥 Mark as Admitted'}
                                   </button>
                                 )}
-                                <button 
-                                  onClick={() => handleDeleteAppointment(app.id)}
-                                  className="bg-rose-50 hover:bg-rose-100 text-rose-600 px-2.5 py-1.5 rounded-lg text-xs font-bold transition"
-                                >
-                                  Delete 🗑️
-                                </button>
+
+                                {/* শুধুমাত্র Super Admin অ্যাপয়েন্টমেন্ট বা কুইক রিজার্ভ ডিলিট/ক্যান্সেল করতে পারবে, সাধারণ Admin পারবে না */}
+                                {userRole === 'superadmin' ? (
+                                  <button 
+                                    disabled={cancellingId === app.id}
+                                    onClick={() => handleDeleteAppointment(app)}
+                                    className="bg-rose-50 hover:bg-rose-100 text-rose-600 px-2.5 py-1.5 rounded-lg text-xs font-bold transition cursor-pointer"
+                                  >
+                                    {cancellingId === app.id
+                                      ? 'Cancelling...'
+                                      : activeTab === 'appointments'
+                                      ? 'Cancel & SMS 🗑️'
+                                      : 'Delete 🗑️'}
+                                  </button>
+                                ) : (
+                                  activeTab === 'appointments' && (
+                                    <span className="text-[10px] text-slate-400 font-semibold italic">View Only</span>
+                                  )
+                                )}
                               </div>
                             </td>
                           </tr>
@@ -1912,7 +1998,6 @@ export default function AdminPanel() {
             </div>
           )}
 
-          {/* Quick Reserve Form (Alternative Number Removed) */}
           {activeTab === 'quick-reserve' && (
             <div className="max-w-xl mx-auto">
               <h3 className="text-lg sm:text-xl font-black text-slate-900 mb-4">Quick Reserve (Emergency Slots)</h3>
@@ -1994,7 +2079,6 @@ export default function AdminPanel() {
                       />
                     </div>
 
-                    {/* Referred Checkbox Option */}
                     <div className="bg-teal-50/70 border border-teal-200 rounded-xl p-3">
                       <label className="flex items-center gap-2 text-xs sm:text-sm font-extrabold text-[#008080] cursor-pointer select-none">
                         <input
@@ -2051,18 +2135,18 @@ export default function AdminPanel() {
             </div>
           )}
 
-          {activeTab === 'lab-reports' && (
+          {activeTab === 'lab-reports' && userRole === 'superadmin' && (
             <div>
               <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center mb-5 gap-3">
                 <div>
                   <h2 className="text-lg sm:text-xl font-black text-slate-900">Diagnostic Lab & Reports ({filteredLabReports.length})</h2>
-                  <p className="text-xs text-slate-500">Create, upload PDF/Image reports, send SMS notifications, and print official diagnostic slips</p>
+                  <p className="text-xs text-slate-500">Upload PDF/Image reports for direct download from the website</p>
                 </div>
                 <button 
                   onClick={() => { resetLabForm(); setIsLabModalOpen(true) }}
                   className="bg-[#008080] hover:bg-[#006666] text-white px-4 py-2.5 rounded-xl font-bold text-xs sm:text-sm transition shadow-sm flex items-center gap-2 w-full sm:w-auto justify-center"
                 >
-                  <span>+</span> Create / Upload Lab Report
+                  <span>+</span> Upload Lab Report
                 </button>
               </div>
 
@@ -2111,7 +2195,6 @@ export default function AdminPanel() {
                     <option value="All">All Status</option>
                     <option value="Ready">Ready</option>
                     <option value="Processing">Processing</option>
-                    <option value="Delivered">Delivered</option>
                   </select>
                 </div>
               </div>
@@ -2120,7 +2203,7 @@ export default function AdminPanel() {
                 <div className="text-center py-12 bg-slate-50 rounded-2xl border border-dashed border-slate-200">
                   <div className="text-3xl mb-2">📄</div>
                   <h4 className="text-sm font-bold text-slate-800">No Lab Reports Found</h4>
-                  <p className="text-xs text-slate-500 mt-1">Click "+ Create / Upload Lab Report" to add a new patient diagnostic report.</p>
+                  <p className="text-xs text-slate-500 mt-1">Click "+ Upload Lab Report" to add a new patient diagnostic report.</p>
                 </div>
               ) : (
                 <div className="overflow-x-auto -mx-3.5 sm:mx-0 px-3.5 sm:px-0">
@@ -2162,10 +2245,10 @@ export default function AdminPanel() {
                                 download={rep.file_name || `${rep.invoice_no}-report`}
                                 className="text-[#008080] font-bold hover:underline flex items-center gap-1 whitespace-nowrap"
                               >
-                                📎 Download
+                                📥 Download Report
                               </a>
                             ) : (
-                              <span className="text-slate-400 text-[11px]">Text Report</span>
+                              <span className="text-rose-500 text-[11px] font-semibold">No File Attached</span>
                             )}
                           </td>
                           <td className="p-2.5 sm:p-3">
@@ -2178,13 +2261,6 @@ export default function AdminPanel() {
                             </button>
                           </td>
                           <td className="p-2.5 sm:p-3 text-right space-x-1.5 whitespace-nowrap">
-                            <button 
-                              onClick={() => printSingleLabReport(rep)}
-                              className="bg-teal-50 hover:bg-teal-100 text-[#008080] px-2.5 py-1.5 rounded-lg text-xs font-bold transition"
-                              title="Print Official Lab Report"
-                            >
-                              🖨️ Print
-                            </button>
                             <button 
                               onClick={() => handleEditLabReport(rep)}
                               className="bg-slate-100 hover:bg-slate-200 text-slate-700 px-2.5 py-1.5 rounded-lg text-xs font-bold transition"
@@ -2212,12 +2288,13 @@ export default function AdminPanel() {
         </main>
       </div>
 
+      {/* Lab Report Upload Modal (Test Findings / Result Summary Box Removed) */}
       {isLabModalOpen && (
         <div className="fixed inset-0 bg-black/50 backdrop-blur-xs flex items-center justify-center p-3 sm:p-4 z-50 overflow-y-auto">
           <div className="bg-white rounded-2xl max-w-2xl w-full p-5 sm:p-8 shadow-2xl relative max-h-[92vh] overflow-y-auto">
             <button onClick={() => setIsLabModalOpen(false)} className="absolute top-4 right-4 text-slate-400 hover:text-slate-600 font-bold text-lg">✕</button>
-            <h3 className="text-lg sm:text-xl font-black text-slate-900 mb-1">{isLabEditMode ? 'Edit Diagnostic Lab Report' : 'Create / Upload New Lab Report'}</h3>
-            <p className="text-xs text-slate-500 mb-4">Patients can immediately download Ready reports from the website using their Bill / Invoice Number or Phone Number.</p>
+            <h3 className="text-lg sm:text-xl font-black text-slate-900 mb-1">{isLabEditMode ? 'Edit Diagnostic Lab Report' : 'Upload New Lab Report'}</h3>
+            <p className="text-xs text-slate-500 mb-4">Patients can directly download the uploaded report file from the website using their Bill / Invoice Number or Phone Number.</p>
 
             <form onSubmit={handleSaveLabReport} className="space-y-4">
               <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
@@ -2357,28 +2434,17 @@ export default function AdminPanel() {
                 </div>
               </div>
 
-              <div>
-                <label className="text-xs font-bold text-slate-700">Test Findings / Result Summary (Printed on Official Slip)</label>
-                <textarea 
-                  rows={4}
-                  value={labForm.report_summary}
-                  onChange={e => setLabForm({...labForm, report_summary: e.target.value})}
-                  placeholder="Enter test values, parameters, or clinical remarks..."
-                  className="w-full border rounded-xl p-3 text-xs mt-1 font-mono outline-none focus:ring-2 focus:ring-teal-500"
-                />
-              </div>
-
               <div className="bg-slate-50 p-4 rounded-xl border border-slate-200">
-                <label className="text-xs font-bold text-slate-800 block mb-1">Upload Scanned Report PDF or Image (Optional)</label>
+                <label className="text-xs font-bold text-slate-800 block mb-1.5">Upload Report PDF or Image File *</label>
                 <input 
                   type="file" 
                   accept=".pdf,image/*"
                   onChange={handleLabFileUpload}
-                  className="text-xs file:mr-3 file:py-2 file:px-4 file:rounded-full file:border-0 file:text-xs file:font-bold file:bg-[#008080] file:text-white hover:file:bg-[#006666] cursor-pointer"
+                  className="text-xs file:mr-3 file:py-2 file:px-4 file:rounded-full file:border-0 file:text-xs file:font-bold file:bg-[#008080] file:text-white hover:file:bg-[#006666] cursor-pointer w-full"
                 />
                 {labForm.file_name && (
                   <p className="text-xs text-emerald-700 font-bold mt-2">
-                    📎 Attached: {labForm.file_name}
+                    📎 Attached File: {labForm.file_name}
                   </p>
                 )}
               </div>
@@ -2400,14 +2466,14 @@ export default function AdminPanel() {
                 disabled={savingLab}
                 className="w-full bg-[#008080] hover:bg-[#006666] text-white py-3 rounded-xl font-bold text-sm transition shadow-md"
               >
-                {savingLab ? 'Saving Report...' : isLabEditMode ? 'Update Lab Report' : 'Publish Lab Report to Website'}
+                {savingLab ? 'Uploading Report...' : isLabEditMode ? 'Update Lab Report' : 'Publish Lab Report to Website'}
               </button>
             </form>
           </div>
         </div>
       )}
 
-      {isAddModalOpen && (
+      {isAddModalOpen && userRole === 'superadmin' && (
         <div className="fixed inset-0 bg-black/50 backdrop-blur-xs flex items-center justify-center p-3 sm:p-4 z-50 overflow-y-auto">
           <div className="bg-white rounded-2xl max-w-2xl w-full p-5 sm:p-8 shadow-2xl relative max-h-[90vh] overflow-y-auto">
             <button onClick={() => setIsAddModalOpen(false)} className="absolute top-4 right-4 text-slate-400 hover:text-slate-600 font-bold text-lg">✕</button>
@@ -2544,7 +2610,7 @@ export default function AdminPanel() {
         </div>
       )}
 
-      {deleteModalDoc && (
+      {deleteModalDoc && userRole === 'superadmin' && (
         <div className="fixed inset-0 bg-black/50 backdrop-blur-xs flex items-center justify-center p-4 z-50">
           <div className="bg-white rounded-2xl max-w-md w-full p-6 shadow-2xl relative">
             <h3 className="text-lg font-black text-rose-600 mb-2">⚠️ Delete Doctor</h3>

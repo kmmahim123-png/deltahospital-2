@@ -384,7 +384,6 @@ export default function Home() {
     }
   }
 
-  // মেইন পেজের Quick Reserve সাবমিট: শুধুমাত্র রোগীর নাম্বারে SMS যাবে (রেফারেল নাম্বারে যাবে না)
   async function handleQuickSubmit(e: React.FormEvent) {
     e.preventDefault()
     if (isSubmittingQuick) return
@@ -511,77 +510,6 @@ export default function Home() {
     }
   }
 
-  // সাদা-কালো প্রিন্টারের জন্য কালো হেডার ("ডেলটা হেলথ্ কেয়ার যাত্রাবাড়ী লিমিটেড")
-  const handlePrintLabReportFromHome = (report: any) => {
-    const printWin = window.open('', '', 'left=0,top=0,width=850,height=750')
-    if (!printWin) return
-
-    printWin.document.write(`
-      <html>
-        <head>
-          <title>Lab Report - ${report.invoice_no}</title>
-          <style>
-            @page { size: A4; margin: 15mm; }
-            body { font-family: 'Segoe UI', Arial, sans-serif; color: #000000; padding: 10px; }
-            .header { display: flex; justify-content: space-between; align-items: center; border-bottom: 3px solid #000000; padding-bottom: 12px; margin-bottom: 20px; }
-            .title-bn { font-size: 22px; font-weight: 900; color: #000000; margin: 0; }
-            .title-en { font-size: 13px; font-weight: 800; color: #000000; margin: 2px 0; }
-            .addr { font-size: 11px; color: #000000; margin: 0; }
-            .meta-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; border: 1.5px solid #000000; border-radius: 8px; padding: 14px; font-size: 12px; margin-bottom: 20px; }
-            .meta-row { display: flex; justify-content: space-between; border-bottom: 1px dashed #000000; padding-bottom: 4px; }
-            .report-title { text-align: center; border: 2px solid #000000; color: #000000; font-weight: 900; padding: 8px; border-radius: 6px; font-size: 14px; letter-spacing: 1px; margin-bottom: 20px; text-transform: uppercase; }
-            .result-box { min-height: 280px; border: 1.5px solid #000000; border-radius: 8px; padding: 18px; font-size: 13px; line-height: 1.7; white-space: pre-wrap; color: #000000; }
-            .footer { margin-top: 50px; display: flex; justify-content: space-between; font-size: 12px; color: #000000; padding-top: 20px; }
-            .sig-line { border-top: 1.5px solid #000000; width: 180px; text-align: center; padding-top: 6px; font-weight: 700; color: #000000; }
-          </style>
-        </head>
-        <body>
-          <div class="header">
-            <div>
-              <h1 class="title-bn">ডেলটা হেলথ্ কেয়ার যাত্রাবাড়ী লিমিটেড</h1>
-              <h2 class="title-en">DELTA HEALTH CARE JATRABARI LIMITED</h2>
-              <p class="addr">169/1-B, West Dholaipar, Jatrabari, Dhaka | Hotline: 09666720320</p>
-            </div>
-            <div style="text-align: right; color: #000000;">
-              <div style="font-size: 16px; font-weight: 900;">Bill No: ${report.invoice_no}</div>
-              <div style="font-size: 11px; font-weight: 700;">Date: ${report.test_date}</div>
-              <div style="font-size: 11px; font-weight: 700;">Status: ${report.delivery_status}</div>
-            </div>
-          </div>
-
-          <div class="meta-grid">
-            <div class="meta-row"><span><b>Patient Name:</b></span> <span>${report.patient_name}</span></div>
-            <div class="meta-row"><span><b>Age / Gender:</b></span> <span>${report.age || '-'} Yrs / ${report.gender || 'Male'}</span></div>
-            <div class="meta-row"><span><b>Phone Number:</b></span> <span>${report.phone}</span></div>
-            <div class="meta-row"><span><b>Referred By:</b></span> <span>${report.referred_by || 'Self'}</span></div>
-            <div class="meta-row"><span><b>Investigation:</b></span> <span><b>${report.test_name}</b></span></div>
-            <div class="meta-row"><span><b>Payment Status:</b></span> <span>${report.payment_status} (${report.amount || ''})</span></div>
-          </div>
-
-          <div class="report-title">Diagnostic Investigation Report — ${report.test_name}</div>
-
-          <div class="result-box">${report.report_summary || 'Test completed accurately. All parameters evaluated.'}</div>
-
-          ${report.file_url && report.file_url.startsWith('data:image') ? `
-            <div style="margin-top: 15px; text-align: center;">
-              <img src="${report.file_url}" style="max-width: 100%; max-height: 360px; border-radius: 8px; border: 1px solid #000;" />
-            </div>
-          ` : ''}
-
-          <div class="footer">
-            <div class="sig-line">Medical Technologist (Lab)</div>
-            <div class="sig-line">Pathologist / Consultant</div>
-            <div class="sig-line">Authorized Signature</div>
-          </div>
-        </body>
-      </html>
-    `)
-    printWin.document.close()
-    printWin.focus()
-    setTimeout(() => { printWin.print() }, 400)
-  }
-
-  // সাদা-কালো প্রিন্টারের জন্য পিওর কালো (#000000) অ্যাপয়েন্টমেন্ট স্লিপ প্রিন্ট
   const handlePrintSlip = () => {
     const printContent = document.getElementById("printable-slip");
     if (!printContent) return;
@@ -952,7 +880,7 @@ export default function Home() {
         </div>
       </footer>
 
-      {/* Lab Report Modal */}
+      {/* Lab Report Modal (Only Direct Download Button) */}
       {isReportModalOpen && (
         <div className="fixed inset-0 bg-black/60 backdrop-blur-xs flex items-center justify-center p-3 z-50 overflow-y-auto">
           <div className="bg-white rounded-2xl max-w-lg w-full p-5 shadow-2xl relative my-auto max-h-[92vh] overflow-y-auto">
@@ -997,7 +925,7 @@ export default function Home() {
                 {labReportList.length > 0 ? (
                   <div className="space-y-2.5 max-h-72 overflow-y-auto pr-1">
                     {labReportList.map((rep) => (
-                      <div key={rep.id} className="bg-slate-50 rounded-xl p-3 border border-slate-200 space-y-1.5 text-xs">
+                      <div key={rep.id} className="bg-slate-50 rounded-xl p-3.5 border border-slate-200 space-y-2 text-xs">
                         <div className="flex justify-between items-center border-b pb-1.5">
                           <span className="font-mono font-black text-xs text-[#008080]">Bill No: {rep.invoice_no}</span>
                           <span className={`font-bold px-2 py-0.5 rounded text-[9px] ${rep.delivery_status === 'Ready' ? 'bg-emerald-100 text-emerald-800' : 'bg-amber-100 text-amber-800'}`}>
@@ -1013,22 +941,19 @@ export default function Home() {
                           <span className="font-bold text-[#008080]">{rep.test_name}</span>
                         </div>
                         {rep.delivery_status === 'Ready' ? (
-                          <div className="pt-1.5 flex gap-2">
-                            <button
-                              type="button"
-                              onClick={() => handlePrintLabReportFromHome(rep)}
-                              className="flex-1 bg-[#008080] hover:bg-[#006666] text-white py-1.5 px-2 rounded-lg font-bold text-[11px] transition text-center shadow-xs"
-                            >
-                              🖨️ Print / PDF
-                            </button>
-                            {rep.file_url && (
+                          <div className="pt-1">
+                            {rep.file_url ? (
                               <a
                                 href={rep.file_url}
                                 download={rep.file_name || `${rep.invoice_no}-report`}
-                                className="flex-1 bg-emerald-600 hover:bg-emerald-700 text-white py-1.5 px-2 rounded-lg font-bold text-[11px] transition text-center shadow-xs"
+                                className="w-full bg-[#008080] hover:bg-[#006666] text-white py-2.5 px-4 rounded-xl font-bold text-xs transition flex items-center justify-center gap-2 shadow-sm cursor-pointer"
                               >
-                                📥 File
+                                <span>📥</span> Download Report
                               </a>
+                            ) : (
+                              <div className="bg-slate-100 text-slate-600 p-2 rounded-lg text-[11px] font-semibold text-center">
+                                Report file is being uploaded. Please check back shortly.
+                              </div>
                             )}
                           </div>
                         ) : (
@@ -1102,7 +1027,7 @@ export default function Home() {
         </div>
       )}
 
-      {/* Quick Reserve Modal (Alternative Number Removed) */}
+      {/* Quick Reserve Modal */}
       {isQuickReserveOpen && (
         <div className="fixed inset-0 bg-black/60 backdrop-blur-xs flex items-center justify-center p-3 z-50 overflow-y-auto">
           <div className="bg-white rounded-2xl max-w-lg w-full p-5 sm:p-6 shadow-2xl relative my-auto max-h-[92vh] overflow-y-auto">
@@ -1187,7 +1112,6 @@ export default function Home() {
                     />
                   </div>
 
-                  {/* Referred Tick Mark Option */}
                   <div className="bg-teal-50/70 border border-teal-200 rounded-xl p-2.5">
                     <label className="flex items-center gap-2 text-xs font-extrabold text-[#008080] cursor-pointer select-none">
                       <input
