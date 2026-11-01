@@ -67,6 +67,7 @@ export default function AdminPanel() {
   const [availableDatesForAdminDoc, setAvailableDatesForAdminDoc] = useState<any[]>([])
   const [isAdminDoctorAbsent, setIsAdminDoctorAbsent] = useState(false)
   const [bookingSubmitted, setBookingSubmitted] = useState(false)
+  const [lastBookedSerial, setLastBookedSerial] = useState<number | null>(null)
 
   const [quickReserveType, setQuickReserveType] = useState('ICU')
   const [quickForm, setQuickForm] = useState({
@@ -1024,6 +1025,14 @@ export default function AdminPanel() {
         console.error("SMS Error:", smsError)
       }
 
+      setLastBookedSerial(nextSerial)
+      setAdminBooking(prev => ({
+        ...prev,
+        name: '',
+        phone: '',
+        age: '',
+        note: ''
+      }))
       setBookingSubmitted(true)
       await cleanupPastBookingsAndFetch()
     } catch (err: any) {
@@ -1086,6 +1095,15 @@ export default function AdminPanel() {
         console.error('Patient SMS error:', smsErr)
       }
 
+      setQuickForm({
+        name: '',
+        age: '',
+        contact: '',
+        note: '',
+        is_referred: false,
+        ref_name: '',
+        ref_phone: ''
+      })
       setQuickSubmitted(true)
       await cleanupPastBookingsAndFetch()
     } catch (err: any) {
@@ -1378,7 +1396,18 @@ export default function AdminPanel() {
 
           {/* ২. Booking Appointment (Super Admin & Admin উভয়ের জন্য) */}
           <button 
-            onClick={() => setActiveTab('booking')}
+            onClick={() => {
+              setBookingSubmitted(false)
+              setLastBookedSerial(null)
+              setAdminBooking(prev => ({
+                ...prev,
+                name: '',
+                phone: '',
+                age: '',
+                note: ''
+              }))
+              setActiveTab('booking')
+            }}
             className={`flex items-center gap-2 px-3.5 py-2.5 sm:px-4 sm:py-3 rounded-xl font-bold text-xs sm:text-sm transition whitespace-nowrap flex-shrink-0 ${activeTab === 'booking' ? 'bg-[#008080] text-white shadow-sm' : 'text-slate-600 hover:bg-slate-50 bg-slate-50/60 lg:bg-transparent'}`}
           >
             <span>➕</span> Booking Appointment
@@ -1792,7 +1821,23 @@ export default function AdminPanel() {
                 <div className="text-center py-8">
                   <div className="w-16 h-16 bg-emerald-100 text-emerald-600 rounded-full flex items-center justify-center mx-auto text-3xl mb-4 font-bold">✓</div>
                   <h3 className="text-xl font-bold text-slate-900">Appointment Booked Successfully!</h3>
-                  <button onClick={() => setBookingSubmitted(false)} className="mt-4 bg-[#008080] text-white px-6 py-2 rounded-xl text-sm font-semibold">
+                  {lastBookedSerial && (
+                    <p className="text-sm font-bold text-[#008080] mt-1">Serial Number: #{lastBookedSerial}</p>
+                  )}
+                  <button 
+                    onClick={() => {
+                      setBookingSubmitted(false)
+                      setLastBookedSerial(null)
+                      setAdminBooking(prev => ({
+                        ...prev,
+                        name: '',
+                        phone: '',
+                        age: '',
+                        note: ''
+                      }))
+                    }} 
+                    className="mt-4 bg-[#008080] text-white px-6 py-2 rounded-xl text-sm font-semibold hover:opacity-90 transition"
+                  >
                     Book Another
                   </button>
                 </div>
