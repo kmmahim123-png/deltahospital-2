@@ -3,6 +3,7 @@
 import { useEffect, useState } from 'react'
 import { supabase } from '@/lib/supabase'
 import { sharedDoctors } from '@/lib/doctors'
+import { sendClientSms } from '@/lib/client-sms'
 
 export default function AdminPanel() {
   const [isAuthenticated, setIsAuthenticated] = useState(false)
@@ -238,14 +239,33 @@ export default function AdminPanel() {
   })
 
   useEffect(() => {
-    const authStatus = localStorage.getItem('delta_admin_auth')
-    const savedRole = localStorage.getItem('delta_admin_role') as 'superadmin' | 'admin'
-    if (authStatus === 'true' && (savedRole === 'superadmin' || savedRole === 'admin')) {
-      setIsAuthenticated(true)
-      setUserRole(savedRole)
-      setActiveTab(savedRole === 'superadmin' ? 'doctors' : 'appointments')
+    async function checkSession() {
+      try {
+        const res = await fetch('/api/auth/session')
+        const data = await res.json()
+        if (data.authenticated && data.role) {
+          setIsAuthenticated(true)
+          setUserRole(data.role)
+          setActiveTab(data.role === 'superadmin' ? 'doctors' : 'appointments')
+        } else {
+          setIsAuthenticated(false)
+        }
+      } catch {
+        setIsAuthenticated(false)
+      }
     }
+    checkSession()
   }, [])
+
+  const handleLogout = async () => {
+    try {
+      await fetch('/api/auth/logout', { method: 'POST' })
+    } finally {
+      setIsAuthenticated(false)
+      setUserRole('admin')
+      setPasswordInput('')
+    }
+  }
 
   useEffect(() => {
     if (isAuthenticated) {
@@ -259,35 +279,27 @@ export default function AdminPanel() {
     await fetchLabReports()
   }
 
-  // Super Admin (`super123`) এবং Admin (`delta123`) লগইন সিস্টেম
-  const handleLogin = (e: React.FormEvent) => {
+  // Admin and Super Admin Login System (Server-Verified)
+  const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault()
-    if (loginRoleSelect === 'superadmin' && passwordInput === 'super123') {
+    try {
+      const res = await fetch('/api/auth/login', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ role: loginRoleSelect, password: passwordInput })
+      })
+      const data = await res.json()
+      if (!res.ok) {
+        alert(data.error || 'Authentication failed: Invalid credentials.')
+        return
+      }
       setIsAuthenticated(true)
-      setUserRole('superadmin')
-      setActiveTab('doctors')
-      localStorage.setItem('delta_admin_auth', 'true')
-      localStorage.setItem('delta_admin_role', 'superadmin')
-    } else if (loginRoleSelect === 'admin' && passwordInput === 'delta123') {
-      setIsAuthenticated(true)
-      setUserRole('admin')
-      setActiveTab('appointments')
-      localStorage.setItem('delta_admin_auth', 'true')
-      localStorage.setItem('delta_admin_role', 'admin')
-    } else {
-      alert(
-        loginRoleSelect === 'superadmin'
-          ? 'Incorrect Super Admin Password!'
-          : 'Incorrect Admin Password!'
-      )
+      setUserRole(data.role)
+      setActiveTab(data.role === 'superadmin' ? 'doctors' : 'appointments')
+      setPasswordInput('')
+    } catch {
+      alert('Connection error during authentication.')
     }
-  }
-
-  const handleLogout = () => {
-    setIsAuthenticated(false)
-    localStorage.removeItem('delta_admin_auth')
-    localStorage.removeItem('delta_admin_role')
-    setPasswordInput('')
   }
 
   const parseDoctorDaysArray = (rawDays: any, fallbackDays?: string[]): string[] => {
@@ -500,20 +512,7 @@ export default function AdminPanel() {
       if (mainPhone && mainPhone.length === 11) {
         const patientSms = `Dear ${app.patient_name}, your admission to Delta Health Care Jatrabari Ltd. (${slotCategory}, Serial: ${displayEqSerial}) has been confirmed. Wishing you a speedy recovery.`
         try {
-          await fetch('https://client.giosms.com/api/v1/send', {
-            method: 'POST',
-            headers: {
-              'Authorization': 'Bearer 9|4KjApQNKFOrzY5teFNuZbfOzCKP9Dn4re5aPJfKW219943ad',
-              'Content-Type': 'application/json',
-              'Accept': 'application/json'
-            },
-            body: JSON.stringify({
-              to: `88${mainPhone}`,
-              message: patientSms,
-              sender_id: '8809666720320',
-              type: 'transactional'
-            })
-          })
+          await sendClientSms(mainPhone, patientSms)
         } catch (e) {
           console.error('Patient admission SMS error:', e)
         }
@@ -522,20 +521,7 @@ export default function AdminPanel() {
       if (refPhone && refPhone.length === 11) {
         const referrerSms = `Dear Sir, the patient ${boldPatientName} you referred has been admitted to Delta Health Care Jatrabari Ltd. Thank you for your valuable referral and support.`
         try {
-          await fetch('https://client.giosms.com/api/v1/send', {
-            method: 'POST',
-            headers: {
-              'Authorization': 'Bearer 9|4KjApQNKFOrzY5teFNuZbfOzCKP9Dn4re5aPJfKW219943ad',
-              'Content-Type': 'application/json',
-              'Accept': 'application/json'
-            },
-            body: JSON.stringify({
-              to: `88${refPhone}`,
-              message: referrerSms,
-              sender_id: '8809666720320',
-              type: 'transactional'
-            })
-          })
+          await sendClientSms(refPhone, referrerSms)
         } catch (e) {
           console.error('Referrer admission SMS error:', e)
         }
@@ -666,20 +652,7 @@ export default function AdminPanel() {
       if (sendSmsOnLabSave && payload.delivery_status === 'Ready') {
         try {
           const smsMsg = `Dear ${payload.patient_name}, your lab report (Bill No: ${payload.invoice_no}) is READY. You can download it from our website. Thank you for choosing Delta Health Care Jatrabari Ltd.`
-          await fetch('https://client.giosms.com/api/v1/send', {
-            method: 'POST',
-            headers: {
-              'Authorization': 'Bearer 9|4KjApQNKFOrzY5teFNuZbfOzCKP9Dn4re5aPJfKW219943ad',
-              'Content-Type': 'application/json',
-              'Accept': 'application/json'
-            },
-            body: JSON.stringify({
-              to: `88${payload.phone}`,
-              message: smsMsg,
-              sender_id: '8809666720320',
-              type: 'transactional'
-            })
-          })
+          await sendClientSms(payload.phone, smsMsg)
         } catch (smsErr) {
           console.error('Lab SMS error:', smsErr)
         }
@@ -990,20 +963,7 @@ export default function AdminPanel() {
       if (!isEmergency && mainPhone && mainPhone.length === 11) {
         const cancelSms = `Dear ${app.patient_name}, your appointment with ${formattedDocName} on ${app.booking_date} has been cancelled. Sorry for the inconvenience. Delta Health Care Jatrabari Ltd. For query please call: 09666720320`
         try {
-          await fetch('https://client.giosms.com/api/v1/send', {
-            method: 'POST',
-            headers: {
-              'Authorization': 'Bearer 9|4KjApQNKFOrzY5teFNuZbfOzCKP9Dn4re5aPJfKW219943ad',
-              'Content-Type': 'application/json',
-              'Accept': 'application/json'
-            },
-            body: JSON.stringify({
-              to: `88${mainPhone}`,
-              message: cancelSms,
-              sender_id: '8809666720320',
-              type: 'transactional'
-            })
-          })
+          await sendClientSms(mainPhone, cancelSms)
         } catch (smsErr) {
           console.error('Cancel SMS error:', smsErr)
         }
@@ -1059,20 +1019,7 @@ export default function AdminPanel() {
       const appointmentSms = `Dear ${adminBooking.name}, your appointment with ${selectedAdminDoctor.name} on ${adminBooking.booking_date} (${selectedAdminDoctor.sitting_hours}) is confirmed. Serial: ${serialNumStr}. Fee: ${docFee}.\nThank you for choosing Delta Health Care Jatrabari Ltd.`
 
       try {
-        await fetch('https://client.giosms.com/api/v1/send', {
-          method: 'POST',
-          headers: {
-            'Authorization': 'Bearer 9|4KjApQNKFOrzY5teFNuZbfOzCKP9Dn4re5aPJfKW219943ad',
-            'Content-Type': 'application/json',
-            'Accept': 'application/json'
-          },
-          body: JSON.stringify({
-            to: `88${adminBooking.phone}`,
-            message: appointmentSms,
-            sender_id: '8809666720320',
-            type: 'transactional'
-          })
-        })
+        await sendClientSms(adminBooking.phone, appointmentSms)
       } catch (smsError) {
         console.error("SMS Error:", smsError)
       }
@@ -1134,20 +1081,7 @@ export default function AdminPanel() {
       const patientSmsMessage = `Dear ${quickForm.name}, your emergency slot (${quickReserveType}) is confirmed. Serial: EQ#${nextEqSerial}. Thank you for choosing Delta Health Care Jatrabari Ltd.`
 
       try {
-        await fetch('https://client.giosms.com/api/v1/send', {
-          method: 'POST',
-          headers: {
-            'Authorization': 'Bearer 9|4KjApQNKFOrzY5teFNuZbfOzCKP9Dn4re5aPJfKW219943ad',
-            'Content-Type': 'application/json',
-            'Accept': 'application/json'
-          },
-          body: JSON.stringify({
-            to: `88${quickForm.contact}`,
-            message: patientSmsMessage,
-            sender_id: '8809666720320',
-            type: 'transactional'
-          })
-        })
+        await sendClientSms(quickForm.contact, patientSmsMessage)
       } catch (smsErr) {
         console.error('Patient SMS error:', smsErr)
       }

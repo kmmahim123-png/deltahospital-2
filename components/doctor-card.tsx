@@ -34,14 +34,23 @@ export function DoctorCard({ doctor, onBook }: { doctor: Doctor; onBook: (doctor
             Visiting Schedule
           </p>
           <ul className="space-y-1.5">
-            {doctor.schedule.map((slot, i) => (
-              <li key={i} className="flex items-center justify-between gap-2 text-sm">
-                <span className="font-semibold text-foreground">{slot.days.join(", ")}</span>
+            {Array.isArray(doctor.schedule) ? (
+              doctor.schedule.map((slot: any, i: number) => (
+                <li key={i} className="flex items-center justify-between gap-2 text-sm">
+                  <span className="font-semibold text-foreground">{slot.days?.join?.(", ") || slot.days}</span>
+                  <span className="rounded-md bg-primary/10 px-2 py-0.5 text-xs font-semibold text-primary">
+                    {slot.time}
+                  </span>
+                </li>
+              ))
+            ) : (
+              <li className="flex items-center justify-between gap-2 text-sm">
+                <span className="font-semibold text-foreground">{doctor.days?.join?.(", ") || "Weekly"}</span>
                 <span className="rounded-md bg-primary/10 px-2 py-0.5 text-xs font-semibold text-primary">
-                  {slot.time}
+                  {doctor.sitting_hours || "Scheduled"}
                 </span>
               </li>
-            ))}
+            )}
           </ul>
         </div>
 

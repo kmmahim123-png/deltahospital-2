@@ -11,7 +11,9 @@ function getUpcomingDays(doctor: Doctor) {
   const fullDays = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"]
   const months = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"]
   
-  const availableDays = doctor.schedule.flatMap((s) => s.days)
+  const availableDays: string[] = Array.isArray(doctor.schedule) 
+    ? doctor.schedule.flatMap((s: any) => s.days) 
+    : (doctor.days || [])
   const upcoming = []
 
   for (let i = 0; i < 7; i++) {
@@ -120,18 +122,15 @@ export function BookingModal({ doctor, open, onClose }: { doctor: Doctor | null,
 
       if (insertError) throw insertError
 
-      const appointmentTime = doctor.schedule?.[0]?.time || 'Evening'
+      if (!doctor) return
+      const appointmentTime = (Array.isArray(doctor.schedule) ? doctor.schedule[0]?.time : doctor.sitting_hours) || 'Evening'
       try {
         await fetch('/api/send-sms', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
             phone: phone.trim(),
-            name: name.trim(),
-            serial: nextSerial,
-            date: selectedDate,
-            time: appointmentTime,
-            doctorName: doctor.name
+            message: `Dear ${name.trim()}, your appointment with ${doctor?.name || ''} on ${selectedDate} is confirmed. Serial: #${nextSerial}.`
           })
         })
       } catch (smsErr) {

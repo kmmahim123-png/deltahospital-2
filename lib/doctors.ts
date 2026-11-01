@@ -1,4 +1,55 @@
-export const sharedDoctors = [
+export interface DoctorScheduleSlot {
+  days: string[]
+  time: string
+}
+
+export interface Doctor {
+  id: string
+  doctor_no?: string
+  name: string
+  nameBn?: string
+  title?: string
+  degree?: string
+  branch?: string
+  specialization: string
+  qualifications?: string
+  fee?: string | number
+  follow_up_fee?: string | number
+  days?: string[]
+  sitting_hours?: string
+  photo?: string
+  image_url?: string
+  room?: string
+  status?: string
+  details?: string
+  phone?: string
+  address?: string
+  reserved_slots?: number
+  experience?: string
+  schedule?: any
+}
+
+export const DAYS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"] as const
+export type Day = typeof DAYS[number]
+
+export const SPECIALIZATIONS = [
+  "Gynae & Obs.",
+  "Medicine",
+  "Cardiology",
+  "Pediatric",
+  "Orthopedic",
+  "ENT",
+  "General Surgery",
+  "Nephrology",
+  "Urology",
+  "Dermatology",
+  "Neurology",
+  "Dental",
+  "Oncology"
+] as const
+export type Specialization = typeof SPECIALIZATIONS[number]
+
+export const sharedDoctors: Doctor[] = [
   {
     id: "1",
     doctor_no: "1",
@@ -336,3 +387,5 @@ export const sharedDoctors = [
     details: "Vascular & Endovascular Surgeon."
   }
 ];
+
+export const doctors = sharedDoctors;

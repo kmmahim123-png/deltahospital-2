@@ -3,6 +3,7 @@
 import { useEffect, useState, useRef, useCallback } from 'react'
 import { supabase } from '@/lib/supabase'
 import { sharedDoctors } from '@/lib/doctors'
+import { sendClientSms } from '@/lib/client-sms'
 import { useRouter } from 'next/navigation'
 
 export default function Home() {
@@ -93,8 +94,7 @@ export default function Home() {
 
   const syncLiveDoctorsWithDatabase = useCallback(async () => {
     try {
-      const cutoffDateStr = get7DaysAgoBDDate()
-      await supabase.from('bookings').delete().lt('booking_date', cutoffDateStr)
+      // Live doctor sync without client-side mass delete
 
       const { data: dbData } = await supabase.from('doctors').select('*').order('id', { ascending: true })
       const dbList = dbData || []
@@ -349,20 +349,7 @@ export default function Home() {
       const appointmentSms = `Dear ${formData.name}, your appointment with ${selectedDoctor.name} on ${formData.booking_date} (${selectedDoctor.sitting_hours}) is confirmed. Serial: ${serialNumStr}. Fee: ${docFee}.\nThank you for choosing Delta Health Care Jatrabari Ltd.`
 
       try {
-        await fetch('https://client.giosms.com/api/v1/send', {
-          method: 'POST',
-          headers: {
-            'Authorization': 'Bearer 9|4KjApQNKFOrzY5teFNuZbfOzCKP9Dn4re5aPJfKW219943ad',
-            'Content-Type': 'application/json',
-            'Accept': 'application/json'
-          },
-          body: JSON.stringify({
-            to: `88${formData.phone}`,
-            message: appointmentSms,
-            sender_id: '8809666720320',
-            type: 'transactional'
-          })
-        });
+        await sendClientSms(formData.phone, appointmentSms);
       } catch (smsError) {
         console.error("SMS Error:", smsError);
       }
@@ -434,20 +421,7 @@ export default function Home() {
       const customSmsMessage = `Dear ${quickForm.name}, your emergency slot (${quickReserveType}) is confirmed. Serial: EQ#${nextEqSerial}. Thank you for choosing Delta Health Care Jatrabari Ltd.`
 
       try {
-        await fetch('https://client.giosms.com/api/v1/send', {
-          method: 'POST',
-          headers: {
-            'Authorization': 'Bearer 9|4KjApQNKFOrzY5teFNuZbfOzCKP9Dn4re5aPJfKW219943ad',
-            'Content-Type': 'application/json',
-            'Accept': 'application/json'
-          },
-          body: JSON.stringify({
-            to: `88${quickForm.contact}`,
-            message: customSmsMessage,
-            sender_id: '8809666720320',
-            type: 'transactional'
-          })
-        });
+        await sendClientSms(quickForm.contact, customSmsMessage);
       } catch (smsError) {
         console.error("SMS Error:", smsError);
       }
@@ -473,40 +447,25 @@ export default function Home() {
     setReportResult(null)
 
     try {
-      const { data: labData } = await supabase
-        .from('lab_reports')
-        .select('*')
-        .or(`invoice_no.ilike.%${query}%,phone.eq.${query}`)
-        .order('id', { ascending: false })
-
-      if (labData && labData.length > 0) {
-        setLabReportList(labData)
-        setReportResult(labData[0])
-        return
-      }
-
-      const cleanInv = query.replace('#', '').replace('EQ', '')
-      const numericSerial = parseInt(cleanInv)
-      let bookingQuery = supabase.from('bookings').select('*')
-
-      if (!isNaN(numericSerial) && query.length < 10) {
-        bookingQuery = bookingQuery.or(`serial_number.eq.${numericSerial},phone.ilike.%${query}%`)
+      const res = await fetch('/api/reports/search', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ query }),
+      });
+      const searchData = await res.json();
+      if (searchData.labReports && searchData.labReports.length > 0) {
+        setLabReportList(searchData.labReports);
+        setReportResult(searchData.labReports[0]);
+      } else if (searchData.bookingSlip) {
+        setReportResult(searchData.bookingSlip);
       } else {
-        bookingQuery = bookingQuery.ilike('phone', `%${query}%`)
-      }
-
-      const { data: bookingData } = await bookingQuery.order('id', { ascending: false }).limit(1)
-
-      if (bookingData && bookingData.length > 0) {
-        setReportResult({ ...bookingData[0], is_booking_slip: true })
-      } else {
-        setReportResult(null)
+        setReportResult(null);
       }
     } catch (err: any) {
-      console.error('Error fetching report:', err)
-      setReportResult(null)
+      console.error('Error fetching report:', err);
+      setReportResult(null);
     } finally {
-      setSearchingReport(false)
+      setSearchingReport(false);
     }
   }
 

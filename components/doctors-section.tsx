@@ -51,19 +51,24 @@ export function DoctorsSection() {
   const [bookingDoctor, setBookingDoctor] = useState<Doctor | null>(null)
 
   const filtered = useMemo(() => {
-    return doctors.filter((d) => {
+    return doctors.filter((d: Doctor) => {
       if (spec && d.specialization !== (spec as Specialization)) return false
-      if (day && !d.schedule.some((s) => s.days.includes(day as Day))) return false
+      if (day) {
+        const hasDay = Array.isArray(d.schedule)
+          ? d.schedule.some((s: any) => s.days?.includes?.(day as Day))
+          : (d.days?.includes?.(day) || false)
+        if (!hasDay) return false
+      }
       if (query) {
         const q = query.toLowerCase()
-        const haystack = `${d.name} ${d.nameBn} ${d.specialization} ${d.title} ${d.qualifications}`.toLowerCase()
+        const haystack = `${d.name || ''} ${d.nameBn || ''} ${d.specialization || ''} ${d.title || ''} ${d.qualifications || ''}`.toLowerCase()
         if (!haystack.includes(q)) return false
       }
       return true
     })
   }, [spec, day, query])
 
-  const hasFilters = spec || day || query
+  const hasFilters = Boolean(spec || day || query)
 
   return (
     <section id="doctors" className="mx-auto max-w-7xl scroll-mt-24 px-4 py-8 sm:py-16">
@@ -107,7 +112,7 @@ export function DoctorsSection() {
                 className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground"
                 aria-hidden="true"
               />
-            <input
+              <input
                 type="search"
                 value={query}
                 onChange={(e) => setQuery(e.target.value)}
@@ -143,7 +148,7 @@ export function DoctorsSection() {
       {/* Doctors Grid Optimized for Mobile */}
       {filtered.length > 0 ? (
         <div className="mt-6 sm:mt-8 grid grid-cols-1 gap-4 sm:gap-6 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
-          {filtered.map((doctor) => (
+          {filtered.map((doctor: Doctor) => (
             <DoctorCard key={doctor.id} doctor={doctor} onBook={setBookingDoctor} />
           ))}
         </div>
